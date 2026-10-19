@@ -17,6 +17,9 @@ import {
 import { RedisService } from '../redis.service';
 import { RoomMessagesService } from './room-messages.service';
 
+const canalPerdu = (texte: string) =>
+  /^Publication (\S+) perdue /.exec(texte)?.[1];
+
 describe('RoomMessagesService', () => {
   const msg = {
     id: 'm1',
@@ -361,15 +364,11 @@ describe('RoomMessagesService', () => {
       await expect(
         service.remove(acteur('u1'), 'r1', 'm1'),
       ).resolves.toBeUndefined();
-      for (const canal of [
+      expect(error.mock.calls.map(([texte]) => canalPerdu(texte))).toEqual([
         'room-message.created',
         'room-message.updated',
         'room-message.deleted',
-      ]) {
-        expect(error).toHaveBeenCalledWith(
-          expect.stringContaining(`Publication ${canal} perdue`),
-        );
-      }
+      ]);
     } finally {
       error.mockRestore();
     }

@@ -18,6 +18,9 @@ import { RedisService } from '../redis.service';
 
 import { MessagesService } from './messages.service';
 
+const canalPerdu = (texte: string) =>
+  /^Publication (\S+) perdue /.exec(texte)?.[1];
+
 describe('MessagesService', () => {
   const msg = {
     id: 'm1',
@@ -493,7 +496,7 @@ describe('MessagesService', () => {
       await expect(
         service.removeForAdmin('m1', 'admin'),
       ).resolves.toBeUndefined();
-      expect(error.mock.calls.map(([texte]) => texte.split(' ')[1])).toEqual([
+      expect(error.mock.calls.map(([texte]) => canalPerdu(texte))).toEqual([
         'private-message.created',
         'private-message.updated',
         'private-message.delivered',
