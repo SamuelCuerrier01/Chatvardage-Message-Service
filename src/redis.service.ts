@@ -49,7 +49,7 @@ export class RedisService implements OnModuleDestroy {
       await this.publish(channel, payload);
     } catch (erreur) {
       this.logger.error(
-        `Publication ${channel} perdue après l'écriture en base : ${erreur instanceof Error ? erreur.message : String(erreur)}`,
+        `Publication ${channel} perdue après l'écriture en base (${referencePublication(payload)}) : ${erreur instanceof Error ? erreur.message : String(erreur)}`,
       );
     }
   }
@@ -73,4 +73,13 @@ export class RedisService implements OnModuleDestroy {
     if (this.publisher.status !== 'end') this.publisher.disconnect();
     if (this.subscriber.status !== 'end') this.subscriber.disconnect();
   }
+}
+
+function referencePublication(payload: unknown): string {
+  const { id, targetId, userId } = (payload ?? {}) as Record<string, unknown>;
+  if (typeof id === 'string') return `id ${id}`;
+  if (typeof targetId === 'string' && typeof userId === 'string') {
+    return `lecture de ${userId} sur ${targetId}`;
+  }
+  return 'sans identifiant';
 }

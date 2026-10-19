@@ -149,30 +149,58 @@ describe('RedisService', () => {
     );
   });
 
-  it('publierApresEcriture journalise un échec sans le propager', async () => {
-    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
-    publish.mockRejectedValueOnce(new Error('redis down'));
-    connect.mockRejectedValueOnce('hors ligne');
-    try {
-      const s = new RedisService();
-      const autre = new RedisService();
+  describe('publierApresEcriture en échec', () => {
+    let error: jest.SpyInstance;
+
+    beforeEach(() => {
+      error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    });
+
+    afterEach(() => error.mockRestore());
+
+    it('journalise l identifiant du message sans propager l erreur', async () => {
+      publish.mockRejectedValueOnce(new Error('redis down'));
 
       await expect(
-        autre.publierApresEcriture('room-message.created', { id: 'm2' }),
-      ).resolves.toBeUndefined();
-      (s.publisher as any).status = 'ready';
-      await expect(
-        s.publierApresEcriture('private-message.created', { id: 'm1' }),
+        new RedisService().publierApresEcriture('private-message.created', {
+          id: 'm1',
+          content: 'secret',
+        }),
       ).resolves.toBeUndefined();
 
       expect(error).toHaveBeenCalledWith(
-        "Publication room-message.created perdue après l'écriture en base : hors ligne",
+        "Publication private-message.created perdue après l'écriture en base (id m1) : redis down",
       );
+    });
+
+    it('journalise la lecture concernée quand la connexion échoue', async () => {
+      connect.mockRejectedValueOnce('hors ligne');
+
+      await expect(
+        new RedisService().publierApresEcriture('read-state.updated', {
+          kind: 'dm',
+          targetId: 'u2',
+          userId: 'u1',
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(publish).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledWith(
-        "Publication private-message.created perdue après l'écriture en base : redis down",
+        "Publication read-state.updated perdue après l'écriture en base (lecture de u1 sur u2) : hors ligne",
       );
-    } finally {
-      error.mockRestore();
-    }
+    });
+
+    it.each([undefined, { targetId: 'u2' }])(
+      'reste explicite sans identifiant exploitable (%p)',
+      async (payload) => {
+        publish.mockRejectedValueOnce(new Error('redis down'));
+
+        await new RedisService().publierApresEcriture('x', payload);
+
+        expect(error).toHaveBeenCalledWith(
+          "Publication x perdue après l'écriture en base (sans identifiant) : redis down",
+        );
+      },
+    );
   });
 });

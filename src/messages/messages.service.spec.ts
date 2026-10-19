@@ -6,6 +6,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { RedisService } from '../redis.service';
 import { MessagesService } from './messages.service';
 
 describe('MessagesService', () => {
@@ -440,6 +441,50 @@ describe('MessagesService', () => {
       'private-message.updated',
       updated,
     );
+  });
+  describe('Redis indisponible après l écriture', () => {
+    let redisReel: RedisService;
+    let error: jest.SpyInstance;
+
+    beforeEach(() => {
+      error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      redisReel = new RedisService();
+      jest
+        .spyOn(redisReel, 'publish')
+        .mockRejectedValue(new Error('redis down'));
+      service = new MessagesService(
+        prisma,
+        redisReel,
+        limiteEnvoi,
+        destinataires,
+        lecture,
+      );
+    });
+
+    afterEach(() => {
+      redisReel.onModuleDestroy();
+      error.mockRestore();
+    });
+
+    it('confirme la création, la modification et la livraison enregistrées', async () => {
+      const updated = { ...msg, content: 'n' };
+      const delivered = { ...msg, deliveredAt: new Date() };
+      prisma.privateMessage.create.mockResolvedValue(msg);
+      prisma.privateMessage.findUnique
+        .mockResolvedValueOnce(msg)
+        .mockResolvedValueOnce({ ...msg, deliveredAt: null });
+      prisma.privateMessage.update.mockResolvedValue(updated);
+      prisma.$queryRaw.mockResolvedValue([delivered]);
+
+      await expect(
+        service.create('u1', { recipientId: 'u2', content: 'hi' }, 'jwt'),
+      ).resolves.toBe(msg);
+      await expect(service.update('u1', 'm1', { content: 'n' })).resolves.toBe(
+        updated,
+      );
+      await expect(service.markDelivered('u2', 'm1')).resolves.toBe(delivered);
+      expect(error).toHaveBeenCalledTimes(3);
+    });
   });
   it('remove not found', async () => {
     prisma.privateMessage.findUnique.mockResolvedValue(null);
