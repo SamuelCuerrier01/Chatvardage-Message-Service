@@ -214,7 +214,7 @@ describe('RedisService', () => {
       );
     });
 
-    it.each([undefined, { targetId: 'u2' }])(
+    it.each([{}, { targetId: 'u2' }])(
       'reste explicite sans identifiant exploitable (%p)',
       async (payload) => {
         publish.mockRejectedValueOnce(new Error('redis down'));

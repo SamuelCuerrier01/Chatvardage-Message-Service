@@ -43,12 +43,12 @@ export class RedisService implements OnModuleDestroy {
     return this.publisher.ping();
   }
 
-  async publish(channel: string, payload: unknown): Promise<number> {
+  async publish(channel: string, payload: object): Promise<number> {
     await this.ensureConnected(this.publisher);
     return this.publisher.publish(channel, JSON.stringify(payload));
   }
 
-  async publierApresEcriture(channel: string, payload: unknown): Promise<void> {
+  async publierApresEcriture(channel: string, payload: object): Promise<void> {
     try {
       await this.publish(channel, payload);
     } catch (erreur) {
@@ -79,8 +79,8 @@ export class RedisService implements OnModuleDestroy {
   }
 }
 
-function referencePublication(payload: unknown): string {
-  const { id, targetId, userId } = (payload ?? {}) as Record<string, unknown>;
+function referencePublication(payload: object): string {
+  const { id, targetId, userId } = payload as Record<string, unknown>;
   if (typeof id === 'string') return `id ${JSON.stringify(id)}`;
   if (typeof targetId === 'string' && typeof userId === 'string') {
     return `lecture de ${JSON.stringify(userId)} sur ${JSON.stringify(targetId)}`;
