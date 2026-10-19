@@ -37,6 +37,8 @@ npm run build
 
 La couverture est exigée à 100 %. Les tests unitaires simulent Prisma, Redis et les autres services.
 
+Le cache de déduplication des événements `typing` garde au plus 1 000 cibles par socket : une nouvelle cible remplace la plus ancienne lorsque cette limite est atteinte.
+
 ### Tests d'intégration (PostgreSQL réel)
 
 `npm run test:integration` exécute les vraies requêtes Prisma des non-lus, de l'état de lecture, de la recherche et de la confirmation de livraison. Ils exigent une base **jetable** dont le nom finit par `_test`, car chaque test vide les tables. Avec le PostgreSQL d'Infra démarré :

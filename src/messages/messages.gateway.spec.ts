@@ -1191,6 +1191,28 @@ describe('MessagesGateway', () => {
     }
   });
 
+  it('borne la mémoire de saisie même si un client change continuellement de destinataire', () => {
+    const typingEmit = jest.fn();
+    const client: any = {
+      data: { userId: 'u1' },
+      to: jest.fn(() => ({ emit: typingEmit })),
+    };
+    for (let i = 0; i < 1500; i++) {
+      gateway.typing(client, {
+        scope: 'dm',
+        targetId: `cible-${i}`,
+        isTyping: true,
+      });
+    }
+    expect(Object.keys(client.data.saisies)).toHaveLength(1000);
+    gateway.typing(client, {
+      scope: 'dm',
+      targetId: 'cible-1499',
+      isTyping: true,
+    });
+    expect(typingEmit).toHaveBeenCalledTimes(1500);
+  });
+
   it('relays a DM-scoped typing event to the target user', () => {
     const typingEmit = jest.fn();
     const client: any = {

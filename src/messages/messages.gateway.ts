@@ -102,6 +102,7 @@ const PRESENCE_CHANNEL = 'presence.changed';
 const PROFIL_CHANNEL = 'profil.changed';
 export const DELAI_MIN_PROFIL_MS = 5000;
 export const DELAI_MIN_SAISIE_MS = 1000;
+const TAILLE_MAX_CACHE_SAISIE = 1000;
 export const DELAI_MIN_PRESENCE_MS = 1000;
 export const DELAI_MIN_SUIVI_PRESENCE_MS = 1000;
 export const INTERVALLE_REVALIDATION_MS = 60_000;
@@ -521,6 +522,10 @@ export class MessagesGateway
       maintenant - precedente.temps < DELAI_MIN_SAISIE_MS
     ) {
       return;
+    }
+    if (!precedente) {
+      const cibles = Object.keys(saisies);
+      if (cibles.length >= TAILLE_MAX_CACHE_SAISIE) delete saisies[cibles[0]];
     }
     saisies[room] = { isTyping: dto.isTyping, temps: maintenant };
 
