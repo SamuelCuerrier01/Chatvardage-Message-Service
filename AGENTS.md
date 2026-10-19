@@ -107,3 +107,8 @@ Infra est la référence du démarrage complet, des architectures, contrats et s
 - **Invalidation de toutes les listes de salons lisibles après un changement de serveur** : elle privilégie les droits actuels.
 - **Recherche sans limite de fréquence spécifique** : limite connue. Avant une forte charge, mesurer et ajouter une limite ou un index trigramme dans ce service.
 - **Chaîne de migrations** : `20260916163000_init` crée `PrivateMessage`, `20260923130000_add_room_message` crée `RoomMessage`, puis `20261006175849_etat_lecture` et `20261006194000_position_lecture` ajoutent l'état de lecture. Une base neuve n'exige aucune migration corrective.
+
+- **`MAX_PRESENCES_SUIVIES` reste privée au DTO** : seuls sa définition et `@ArrayMaxSize` l'utilisent ; compilation et tests passent. Réexporter cette limite sans appelant élargirait inutilement l'API du module.
+- **En-têtes des fichiers partagés** : la règle est dans ce fichier et `verifier-fichiers-partages.sh` contrôle l'identité réelle. Une annotation inventée `@shared-file`, sans outil qui la lit, n'ajouterait aucun contrôle.
+- **Anciens renvois `docs/TEMPS_REEL_*.md`** : aucune référence ne subsiste dans les dépôts locaux de l'équipe ; les liens actifs pointent vers Infra. Ne pas rétablir des pages de redirection pour des favoris externes hypothétiques.
+- **Revues GitHub** : configuration, secrets et rotation sont décrits dans le [guide Infra](https://github.com/Chatvardage/A26_5A6_01-Infra/blob/main/docs/revues-github.md). Les recopier dans les commentaires du workflow créerait une seconde procédure à maintenir.
