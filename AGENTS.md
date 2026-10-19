@@ -120,3 +120,5 @@ Infra est la référence du démarrage complet, des architectures, contrats et s
 - **Formatage des signatures et imports** : ne pas déduire un échec Prettier de leur disposition visuelle. Les fichiers `src/rooms/rooms-client.service.ts` et `src/messages/dto/presence.dto.ts` passent le contrôle avec Prettier 3.9.7 verrouillé et `.prettierrc`, comme `npm run format:check` en CI ; les réécrire manuellement ne corrigerait aucun échec.
 
 - **Codex dans ce dépôt public** : le relais après échec ou quota Copilot est voulu pour les PR internes, quel que soit le statut public ou privé du dépôt. Rétablir `github.event.repository.private` empêcherait ce relais demandé. La restriction au même dépôt, l’environnement dédié et la sérialisation des rotations restent en place ; les forks ne reçoivent pas ces secrets.
+
+- **Profil AppArmor du sandbox** : la même étape a réussi sur Ubuntu 24.04 dans [le job Gateway 117932065477](https://github.com/Chatvardage/A26_5A6_01-Serveur-API/actions/runs/39213488827/job/117932065477), avec revue Codex et publication réussies. Une interprétation hypothétique du nom du profil ne justifie pas de désactiver cette protection sans erreur réelle.
