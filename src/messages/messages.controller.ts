@@ -76,7 +76,6 @@ export class MessagesController {
     return this.messages.create(
       req.auth.id,
       dto,
-      // Déjà validé par JwtAuthGuard.
       extraireJetonBearer(req.headers.authorization),
     );
   }
@@ -225,8 +224,6 @@ export class MessagesController {
     return this.recherche.rechercher(req.auth, query);
   }
 
-  // En dernier : Express essaie les routes dans l'ordre de déclaration,
-  // ':id' capturerait sinon `admin`, `conversations`, `unread` et `search`.
   @Get(':id')
   @ApiOperation({
     summary: "Lit un DM dont je suis l'expéditeur ou le destinataire",

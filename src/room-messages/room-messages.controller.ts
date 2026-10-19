@@ -103,8 +103,6 @@ export class RoomMessagesController {
     return { lecteurs: await this.lecture.lecteursSalon(req.auth, roomId) };
   }
 
-  // Avant ':roomId/:id' : Express essaie les routes dans l'ordre de
-  // déclaration, `history` serait sinon pris pour un id de message.
   @Get(':roomId/history')
   @ApiOperation({
     summary: "Historique d'un salon",

@@ -14,17 +14,12 @@ model PrivateMessage {
   content     String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  // Confirme uniquement par le destinataire apres reception dans son application.
   deliveredAt DateTime?
 
   @@index([senderId, recipientId, createdAt])
   @@index([recipientId, senderId, createdAt])
 }
 
-// Aucune FK vers Room : Room-Service possède les salons/membres dans sa
-// propre base de données. Message-Service vérifie l'appartenance au salon
-// via un appel HTTP à Room-Service (voir RoomsClientService) avant chaque
-// écriture ou lecture.
 model RoomMessage {
   id        String   @id @default(uuid())
   roomId    String
@@ -41,20 +36,14 @@ enum ConversationKind {
   room
 }
 
-// État de lecture d'une conversation par un utilisateur (messages non lus,
-// contrôle 3). `targetId` : l'interlocuteur pour un DM, le salon sinon.
-// PostgreSQL fait foi : l'état survit au redémarrage du service.
 model ConversationReadState {
   userId            String
   kind              ConversationKind
   targetId          String
-  // Date du dernier message lu ; ne recule jamais.
   lastReadAt        DateTime
-  // Position dans la milliseconde; null pour les lectures historiques.
   lastReadMessageId String?
   updatedAt         DateTime         @updatedAt
 
   @@id([userId, kind, targetId])
-  // Effacement quand l'interlocuteur ou le salon disparaît.
   @@index([kind, targetId])
 }

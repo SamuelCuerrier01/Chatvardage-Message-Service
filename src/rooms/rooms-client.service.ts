@@ -6,13 +6,8 @@ import {
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '../auth/jwt-auth.service';
 
-// Borne la mémoire du cache : au-delà, l'entrée AJOUTÉE la première est
-// oubliée (FIFO, pas LRU : une lecture ne la rajeunit pas). Suffisant avec
-// une durée de vie courte : une entrée expire bien avant d'être évincée,
-// sauf avec plus de 10 000 entrées vivantes à la fois.
 export const TAILLE_MAX_CACHE_ACCES = 10_000;
 
-/** Durée de mémorisation d'un accès (ms), 10 s par défaut, 0 = sans cache. */
 export function dureeCacheAccesMs(
   env: NodeJS.ProcessEnv = process.env,
 ): number {
@@ -26,24 +21,12 @@ export function dureeCacheAccesMs(
 }
 
 export type ConfigRoomsClient = {
-  /** Origine de Room-Service, sans chemin. */
   urlService: string;
-  /** INTERNAL_SERVICE_TOKEN ; absent, chaque appel échoue en 503. */
   jetonInterne: string | null;
   delaiMs: number;
   dureeCacheMs: number;
 };
 
-/**
- * Lit et valide la configuration au démarrage (erreur immédiate plutôt
- * qu'un 503 générique au premier message de salon), comme
- * lireConfigClientAuth pour Authentification :
- * - `ROOM_SERVICE_URL` : origine HTTP(S) seule, sans chemin ni paramètres.
- *   HTTPS n'est pas exigé en production : l'appel reste sur le réseau interne
- *   des services, jamais relayé par Serveur-API ;
- * - `ROOM_SERVICE_TIMEOUT_MS` : entier ≥ 1, 3000 ms par défaut ;
- * - `ROOM_ACCESS_CACHE_TTL_MS` : voir dureeCacheAccesMs.
- */
 export function lireConfigRoomsClient(
   env: NodeJS.ProcessEnv = process.env,
 ): ConfigRoomsClient {
@@ -80,20 +63,15 @@ export function lireConfigRoomsClient(
   };
 }
 
-/** Accès d'un utilisateur à un salon, calculé par Room-Service. */
 export type AccesSalon = {
   salonId: string;
   serveurId: string;
   estMembre: boolean;
   peutLire: boolean;
   peutEcrire: boolean;
-  /** Modérateur du serveur (ou propriétaire, admin) : peut supprimer les
-   * messages des autres. Absent d'un Room-Service plus ancien : faux. */
   peutModerer: boolean;
 };
 
-/** Salon lisible par un utilisateur, avec son arrivée dans le serveur
- * (`null` : pas de ligne de membre, voir Room-Service). */
 export type SalonLisible = {
   salonId: string;
   serveurId: string;
@@ -102,25 +80,8 @@ export type SalonLisible = {
 
 export type Acteur = Pick<AuthenticatedUser, 'id' | 'role'>;
 
-/**
- * Client des routes internes de Room-Service
- * (`GET /api/internal/channels/:id/access/:userId` et
- * `GET /api/internal/users/:userId/channels`), protégées par le secret
- * partagé INTERNAL_SERVICE_TOKEN. Room-Service est la seule source de vérité
- * des permissions (salons réservés aux modérateurs, écriture réservée de
- * #annonces…) : ce service ne recode aucune règle.
- *
- * Cache : chaque envoi ou lecture de message de salon demande l'accès ; un
- * accès obtenu est donc mémorisé `ROOM_ACCESS_CACHE_TTL_MS` (10 s par
- * défaut), tout comme la liste des salons lisibles. Room-Service prévient de
- * chaque changement d'un serveur (voir MessagesGateway.broadcastServeurEvent),
- * qui oublie alors tous les accès à ce serveur et toutes les listes
- * (`oublierServeur`) : une expulsion ou un salon rendu réservé est pris en
- * compte aussitôt. Les erreurs ne sont jamais mémorisées.
- */
 @Injectable()
 export class RoomsClientService {
-  // Configuration lue et validée au démarrage du service.
   private readonly config = lireConfigRoomsClient();
   private readonly cache = new Map<
     string,
@@ -152,7 +113,6 @@ export class RoomsClientService {
     );
   }
 
-  /** Salons que l'utilisateur peut lire (recherche, messages non lus). */
   async salonsLisibles(acteur: Acteur): Promise<SalonLisible[]> {
     const clef = `${acteur.id}|${acteur.role}`;
     const entree = this.cacheListes.get(clef);
@@ -177,12 +137,7 @@ export class RoomsClientService {
     );
   }
 
-  /** Oublie les accès mémorisés aux salons d'un serveur qui a changé, et
-   * toutes les listes : un salon créé ou un serveur rejoint les modifie
-   * sans qu'elles mentionnent encore ce serveur. */
   oublierServeur(serveurId: string): void {
-    // Une réponse commencée avant cet événement ne doit ni être utilisée
-    // ni remettre les anciens droits en cache. Une seule relance, puis 503.
     this.generationInvalidation += 1;
     for (const [clef, { acces }] of this.cache) {
       if (acces.serveurId === serveurId) this.cache.delete(clef);
@@ -239,8 +194,6 @@ export class RoomsClientService {
     };
   }
 
-  /** Appelle une route interne et renvoie son corps JSON. `introuvable` :
-   * message du 404 renvoyé au client, ou `null` si un 404 est une panne. */
   private async lireJson(
     chemin: string,
     introuvable: string | null,
@@ -279,7 +232,6 @@ export class RoomsClientService {
   }
 }
 
-/** Valide `{ salons: [{ salonId, serveurId, depuis }] }` (502 sinon). */
 function lireSalonsLisibles(corps: unknown): SalonLisible[] {
   const invalide = () =>
     new BadGatewayException('Réponse invalide du service des salons');

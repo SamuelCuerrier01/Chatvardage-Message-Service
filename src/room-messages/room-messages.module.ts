@@ -15,8 +15,6 @@ import { RoomMessagesService } from './room-messages.service';
     EtatLectureService,
     JwtAuthGuard,
   ],
-  // MessagesModule : routes internes (purge), gateway (cache des accès),
-  // non-lus des DM et recherche.
   exports: [RoomMessagesService, RoomsClientService, EtatLectureService],
 })
 export class RoomMessagesModule {}

@@ -61,7 +61,6 @@ describe('LimiteEnvoiService', () => {
     service.verifier('recent', 1000 + FENETRE_ENVOI_MS);
     service.nettoyer(1000 + FENETRE_ENVOI_MS);
 
-    // « ancien » repart de zéro, « recent » garde son envoi.
     envoyer('ancien', MAX_ENVOIS_PAR_FENETRE, 1000 + FENETRE_ENVOI_MS);
     envoyer('recent', MAX_ENVOIS_PAR_FENETRE - 1, 1000 + FENETRE_ENVOI_MS);
     expect(() => service.verifier('recent', 1000 + FENETRE_ENVOI_MS)).toThrow(

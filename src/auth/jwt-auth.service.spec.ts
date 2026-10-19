@@ -1,8 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { JwtAuthService } from './jwt-auth.service';
 
-// Le détail (configuration, cache, erreurs) est testé dans
-// src/partage/client-auth.spec.ts.
 describe('JwtAuthService', () => {
   const originalFetch = global.fetch;
 
@@ -24,7 +22,6 @@ describe('JwtAuthService', () => {
       courriel: 'alice@example.com',
       role: 'utilisateur',
     };
-    // Une réponse neuve par appel (son corps ne se lit qu'une fois).
     global.fetch = jest.fn(() =>
       Promise.resolve(new Response(JSON.stringify(user), { status: 200 })),
     );

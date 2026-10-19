@@ -28,7 +28,6 @@ describe('RoomsClientService', () => {
   };
 
   beforeEach(() => {
-    // La configuration est lue à la construction (voir lireConfigRoomsClient).
     process.env.INTERNAL_SERVICE_TOKEN = 'secret-interne';
     service = new RoomsClientService();
   });
@@ -217,7 +216,6 @@ describe('RoomsClientService', () => {
       await service.verifierAcces('r1', acteur);
       expect(global.fetch).toHaveBeenCalledTimes(1);
 
-      // Autre utilisateur, autre rôle ou autre salon : autre entrée.
       await service.verifierAcces('r1', { id: 'u2', role: 'utilisateur' });
       await service.verifierAcces('r1', { id: 'u1', role: 'admin' });
       await service.verifierAcces('r2', acteur);

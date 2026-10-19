@@ -10,11 +10,6 @@ import type { Request } from 'express';
 
 export const EN_TETE_JETON_INTERNE = 'x-internal-token';
 
-/**
- * Protège les routes `/api/internal/*`, appelées uniquement par les autres
- * microservices (Serveur-API ne les relaie pas). Même secret partagé que la
- * route interne de Room-Service (INTERNAL_SERVICE_TOKEN). Échoue fermé.
- */
 @Injectable()
 export class InternalTokenGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {

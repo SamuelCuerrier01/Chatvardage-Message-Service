@@ -1,6 +1,3 @@
-// Fichier partagé : identique dans Room-Service et Message-Service
-// (src/partage/). Le modifier dans les deux dépôts à la fois ;
-// A26_5A6_01-Infra/scripts/verifier-fichiers-partages.sh le vérifie.
 import {
   BadGatewayException,
   ForbiddenException,
@@ -10,12 +7,9 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 
-// Rôles globaux d'Authentification. Le modérateur n'existe que dans un
-// serveur (Room-Service), jamais comme rôle global.
 export const ROLES_GLOBAUX = ['admin', 'utilisateur'] as const;
 export type RoleGlobal = (typeof ROLES_GLOBAUX)[number];
 
-/** Utilisateur renvoyé par `GET /api/auth/me` (champs utilisés ici). */
 export type UtilisateurAuthentifie = {
   id: string;
   pseudo: string;
@@ -24,14 +18,11 @@ export type UtilisateurAuthentifie = {
 };
 
 export type ConfigClientAuth = {
-  /** Origine du service Authentification, sans chemin. */
   urlService: string;
   delaiMs: number;
-  /** Durée de mémorisation d'un jeton validé ; 0 désactive le cache. */
   dureeCacheMs: number;
 };
 
-// Borne la mémoire du cache : au-delà, l'entrée la plus ancienne est oubliée.
 export const TAILLE_MAX_CACHE = 10_000;
 
 function entierEnv(
@@ -54,15 +45,6 @@ function entierEnv(
   return valeur;
 }
 
-/**
- * Lit et valide la configuration au démarrage (erreur immédiate plutôt qu'à
- * la première requête) :
- * - `AUTH_SERVICE_URL` : origine seule (sans chemin ni paramètres), HTTPS
- *   obligatoire en production ;
- * - `AUTH_SERVICE_TIMEOUT_MS` : délai d'appel, 3000 ms par défaut ;
- * - `AUTH_CACHE_TTL_MS` : durée de mémorisation d'un jeton validé, 10 000 ms
- *   par défaut, 0 pour interroger Authentification à chaque requête.
- */
 export function lireConfigClientAuth(
   env: NodeJS.ProcessEnv = process.env,
 ): ConfigClientAuth {
@@ -89,9 +71,7 @@ export function lireConfigClientAuth(
   };
 }
 
-/** Jeton d'un en-tête `Authorization: Bearer <jeton>`, sinon 401. */
 export function extraireJetonBearer(authorization?: string): string {
-  // Les noms de schémas d'authentification HTTP sont insensibles à la casse.
   const correspondance = authorization?.match(/^Bearer\s+(\S+)\s*$/i);
   if (!correspondance) {
     throw new UnauthorizedException('Authorization Bearer requis');
@@ -115,17 +95,6 @@ function estUtilisateur(valeur: unknown): valeur is UtilisateurAuthentifie {
   );
 }
 
-/**
- * Valide un JWT auprès d'Authentification (`GET /api/auth/me`), seule
- * source de vérité du rôle et des révocations.
- *
- * Cache : un jeton validé est mémorisé `dureeCacheMs` (clé = empreinte
- * SHA-256, le jeton lui-même n'est pas conservé). Compromis assumé : un
- * jeton révoqué (mot de passe changé, compte supprimé) ou un rôle modifié
- * n'est pris en compte qu'à l'expiration de l'entrée. Les refus (401/403)
- * et les pannes ne sont jamais mémorisés. Des validations simultanées d'un
- * même jeton ne font qu'un seul appel.
- */
 export class ClientAuth {
   private readonly logger = new Logger(ClientAuth.name);
   private readonly cache = new Map<
@@ -156,9 +125,6 @@ export class ClientAuth {
 
     const promesse = this.demanderAuService(jeton)
       .then((utilisateur) => {
-        // Une révocation peut avoir remplacé cet appel pendant la réponse.
-        // L'ancienne réponse ne doit alors ni restaurer le cache ni effacer
-        // la nouvelle validation en cours.
         if (this.enCours.get(clef) === promesse) {
           this.memoriser(clef, utilisateur);
         }
@@ -171,10 +137,6 @@ export class ClientAuth {
     return promesse;
   }
 
-  /**
-   * Comme `verifierJeton`, sans réutiliser le cache : sert quand on sait que
-   * des jetons viennent d'être révoqués (sessions d'un compte invalidées).
-   */
   async verifierJetonSansCache(jeton: string): Promise<UtilisateurAuthentifie> {
     const clef = createHash('sha256').update(jeton).digest('hex');
     this.cache.delete(clef);
@@ -182,7 +144,6 @@ export class ClientAuth {
     return this.verifierJeton(jeton);
   }
 
-  /** Nombre d'entrées en cache (diagnostic et tests). */
   get tailleCache(): number {
     return this.cache.size;
   }
