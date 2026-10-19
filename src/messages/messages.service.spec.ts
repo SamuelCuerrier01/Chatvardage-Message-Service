@@ -97,7 +97,7 @@ describe('MessagesService', () => {
       NotFoundException,
     );
   });
-  it('propage une panne de stockage ou de diffusion', async () => {
+  it('propage une panne de stockage', async () => {
     prisma.privateMessage.findUnique.mockResolvedValue({
       ...msg,
       deliveredAt: null,
