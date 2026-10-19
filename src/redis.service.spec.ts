@@ -169,7 +169,7 @@ describe('RedisService', () => {
       ).resolves.toBeUndefined();
 
       expect(error).toHaveBeenCalledWith(
-        "Publication private-message.created perdue après l'écriture en base (id m1) : redis down",
+        `Publication private-message.created perdue après l'écriture en base (id "m1") : redis down`,
       );
     });
 
@@ -186,7 +186,19 @@ describe('RedisService', () => {
 
       expect(publish).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledWith(
-        "Publication read-state.updated perdue après l'écriture en base (lecture de u1 sur u2) : hors ligne",
+        `Publication read-state.updated perdue après l'écriture en base (lecture de "u1" sur "u2") : hors ligne`,
+      );
+    });
+
+    it('échappe les retours à la ligne d un identifiant', async () => {
+      publish.mockRejectedValueOnce(new Error('redis down'));
+
+      await new RedisService().publierApresEcriture('x', {
+        id: 'm1\nfaux enregistrement',
+      });
+
+      expect(error).toHaveBeenCalledWith(
+        'Publication x perdue après l\'écriture en base (id "m1\\nfaux enregistrement") : redis down',
       );
     });
 

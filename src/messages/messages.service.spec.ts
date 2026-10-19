@@ -178,6 +178,10 @@ describe('MessagesService', () => {
       expect(log).toHaveBeenCalledWith(
         'Admin admin a créé le DM m1 au nom de u1',
       );
+      expect(redis.publierApresEcriture).toHaveBeenCalledWith(
+        'private-message.created',
+        msg,
+      );
       expect(log.mock.invocationCallOrder[0]).toBeLessThan(
         redis.publierApresEcriture.mock.invocationCallOrder[0],
       );

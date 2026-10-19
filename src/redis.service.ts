@@ -77,9 +77,9 @@ export class RedisService implements OnModuleDestroy {
 
 function referencePublication(payload: unknown): string {
   const { id, targetId, userId } = (payload ?? {}) as Record<string, unknown>;
-  if (typeof id === 'string') return `id ${id}`;
+  if (typeof id === 'string') return `id ${JSON.stringify(id)}`;
   if (typeof targetId === 'string' && typeof userId === 'string') {
-    return `lecture de ${userId} sur ${targetId}`;
+    return `lecture de ${JSON.stringify(userId)} sur ${JSON.stringify(targetId)}`;
   }
   return 'sans identifiant';
 }
