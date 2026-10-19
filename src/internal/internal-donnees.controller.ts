@@ -18,7 +18,6 @@ import {
   InternalTokenGuard,
 } from './internal-token.guard';
 
-/** Salons supprimés dans Room-Service (qui les envoie par lots de 500). */
 export class SalonsSupprimesDto {
   @ApiProperty({ type: [String], maxItems: 500 })
   @IsArray()
@@ -28,11 +27,6 @@ export class SalonsSupprimesDto {
   salonIds!: string[];
 }
 
-/**
- * Effacement de données demandé par les autres services, quand ce qu'elles
- * concernent n'existe plus : salons supprimés (Room-Service), compte
- * supprimé (Authentification). Idempotent : un second appel n'efface rien.
- */
 @ApiTags('Interne')
 @ApiHeader({ name: EN_TETE_JETON_INTERNE, required: true })
 @Controller('internal')
@@ -69,7 +63,6 @@ export class InternalDonneesController {
   async supprimerUtilisateur(
     @Param('userId') userId: string,
   ): Promise<{ messagesPrives: number; messagesSalons: number }> {
-    // Avant l'effacement : plus aucun nouveau message ne doit lui parvenir.
     this.destinataires.oublier(userId);
     const [messagesPrives, messagesSalons] = await Promise.all([
       this.messages.supprimerUtilisateur(userId),

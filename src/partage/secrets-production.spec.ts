@@ -1,4 +1,3 @@
-// Fichier partagé : voir l'en-tête de secrets-production.ts.
 import {
   LONGUEUR_MIN_JETON_INTERNE,
   MOTS_DE_PASSE_DE_DEVELOPPEMENT,

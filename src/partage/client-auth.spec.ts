@@ -1,4 +1,3 @@
-// Fichier partagé : voir l'en-tête de client-auth.ts.
 import {
   BadGatewayException,
   ForbiddenException,
@@ -124,7 +123,6 @@ describe('ClientAuth', () => {
   let erreurJournal: jest.SpyInstance;
 
   beforeEach(() => {
-    // Une Response neuve à chaque appel : un corps ne se lit qu'une fois.
     fetchMock = jest.fn(() => Promise.resolve(reponse(200, UTILISATEUR)));
     global.fetch = fetchMock;
     maintenant = 1_000;
@@ -178,7 +176,6 @@ describe('ClientAuth', () => {
     fetchMock.mockResolvedValueOnce(reponse(401, { erreur: 'révoqué' }));
     await expect(auth.verifierJetonSansCache('jwt')).rejects.toBeDefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    // Refus jamais mémorisé : l'entrée en cache a disparu.
     expect(auth.tailleCache).toBe(0);
   });
 
@@ -291,7 +288,6 @@ describe('ClientAuth', () => {
       { ...UTILISATEUR, pseudo: 1 },
       { ...UTILISATEUR, courriel: '' },
       { ...UTILISATEUR, role: 'roi' },
-      // Le modérateur n'existe que dans un serveur, pas comme rôle global.
       { ...UTILISATEUR, role: 'moderateur' },
     ]) {
       fetchMock.mockResolvedValueOnce(reponse(200, corps));

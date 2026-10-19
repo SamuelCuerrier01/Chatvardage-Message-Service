@@ -1,10 +1,5 @@
 name: CI
 
-# Lint, compilation et tests unitaires à chaque PR et sur les branches
-# principales : une régression ne doit pas pouvoir être fusionnée sans
-# qu'aucun test n'ait tourné. Les tests e2e (base de données réelle) ne
-# sont pas lancés ici.
-
 on:
   pull_request:
   push:
@@ -30,8 +25,6 @@ jobs:
           cache: npm
       - run: node scripts/verifier-version.mjs
       - run: npm ci
-      # Toutes les dépendances (dev comprises) : une vulnérabilité high ou
-      # critical ne doit pas pouvoir entrer sans faire échouer le CI.
       - run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run build

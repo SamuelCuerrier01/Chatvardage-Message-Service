@@ -136,7 +136,7 @@ describe('EtatLectureService', () => {
         { salonId: 'inconnu', serveurId: 's', depuis: null },
       ]);
       prisma.conversationReadState.findMany
-        .mockResolvedValueOnce([]) // DM
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([
           { targetId: 'lu-apres', lastReadAt: t(5) },
           { targetId: 'arrive-apres', lastReadAt: t(3) },

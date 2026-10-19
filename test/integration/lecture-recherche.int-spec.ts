@@ -1,12 +1,3 @@
-/**
- * Tests d'intégration : les vraies requêtes Prisma contre un PostgreSQL
- * migré (les tests unitaires simulent Prisma). Ils vérifient le calcul des
- * non-lus, l'état de lecture qui survit à un redémarrage (nouveau client
- * Prisma) et le filtrage de la recherche.
- *
- * DATABASE_URL doit désigner une base JETABLE dont le nom finit par `_test` :
- * chaque test vide les tables. Voir le README (« Tests d'intégration »).
- */
 import { PrismaClient } from '@prisma/client';
 import { EtatLectureService } from '../../src/lecture/etat-lecture.service';
 import type { PrismaService } from '../../src/prisma.service';
@@ -34,7 +25,6 @@ const moi: Acteur = { id: MOI, role: 'utilisateur' };
 
 const t = (minute: number) => new Date(Date.UTC(2026, 9, 6, 12, minute, 0, 0));
 
-/** Redis simulé : les événements publiés sont gardés pour vérification. */
 const publies: unknown[][] = [];
 const redisSimule = {
   publish: (...args: unknown[]) => {
@@ -43,7 +33,6 @@ const redisSimule = {
   },
 } as unknown as RedisService;
 
-/** Room-Service simulé : seule la frontière HTTP l'est, pas la base. */
 function roomsSimule(salons: SalonLisible[]): RoomsClientService {
   return {
     salonsLisibles: () => Promise.resolve(salons),
@@ -200,7 +189,6 @@ describe('non-lus, état de lecture et recherche (PostgreSQL réel)', () => {
     await dm(BOB, MOI, 6);
     const { lecture } = services(prisma);
 
-    // Jamais lus : tout ce qui a été reçu (notIn [] compris).
     expect(await lecture.compteurs(moi)).toEqual({
       [`dm:${ALICE}`]: 3,
       [`dm:${BOB}`]: 2,
@@ -214,7 +202,6 @@ describe('non-lus, état de lecture et recherche (PostgreSQL réel)', () => {
       [`dm:${BOB}`]: 2,
     });
 
-    // Jusqu'au dernier message : plus rien à lire chez Alice.
     await lecture.marquerDmLu(MOI, ALICE);
     expect(await lecture.compteurs(moi)).toEqual({ [`dm:${BOB}`]: 2 });
   });
@@ -235,7 +222,7 @@ describe('non-lus, état de lecture et recherche (PostgreSQL réel)', () => {
   });
 
   it("salon : ne compte qu'après l'arrivée dans le serveur, ni ses propres messages", async () => {
-    await salon(SALON, ALICE, 5); // avant l'arrivée (t(10))
+    await salon(SALON, ALICE, 5);
     await salon(SALON, ALICE, 11);
     await salon(SALON, MOI, 12);
     const lu = await salon(SALON, BOB, 13);
@@ -286,7 +273,6 @@ describe('non-lus, état de lecture et recherche (PostgreSQL réel)', () => {
         },
       ],
     ]);
-    // Déjà lu jusque-là : rien de plus n'est publié.
     await lectureAlice.marquerDmLu(ALICE, MOI);
     expect(publies).toHaveLength(1);
 
@@ -310,8 +296,6 @@ describe('non-lus, état de lecture et recherche (PostgreSQL réel)', () => {
     await services(prisma).lecture.marquerSalonLu(moi, SALON);
     const avant = await services(prisma).lecture.compteurs(moi);
 
-    // « Redémarrage » : nouveau client Prisma, nouveaux services, aucun
-    // état en mémoire conservé.
     const apresRedemarrage = new PrismaClient();
     try {
       await expect(
@@ -401,7 +385,6 @@ describe('non-lus, état de lecture et recherche (PostgreSQL réel)', () => {
       await dm(ALICE, MOI, 20 + 2 * i, `mot ${i}`);
       await salon(SALON, ALICE, 21 + 2 * i, `mot salon ${i}`);
     }
-    // Même milliseconde : départagés par identifiant.
     await dm(BOB, MOI, 40, 'mot égalité A');
     await dm(BOB, MOI, 40, 'mot égalité B');
     const { recherche } = services(prisma);

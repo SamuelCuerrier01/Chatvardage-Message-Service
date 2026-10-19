@@ -7,15 +7,8 @@ import {
 
 export type AuthenticatedUser = UtilisateurAuthentifie;
 
-/**
- * Valide le JWT (REST et connexion Socket.IO) auprès d'Authentification.
- * Configuration, cache et traduction des erreurs : src/partage/client-auth.ts,
- * partagé avec Room-Service. Une seule instance (ServicesCommunsModule)
- * pour que le cache soit commun à tout le service.
- */
 @Injectable()
 export class JwtAuthService {
-  // Configuration lue et validée au démarrage du service.
   private readonly client = new ClientAuth();
 
   bearerToken(authorization?: string): string {
@@ -26,7 +19,6 @@ export class JwtAuthService {
     return this.client.verifierJeton(token);
   }
 
-  /** Revérifie auprès d'Authentification, sans le cache (sessions révoquées). */
   verifyTokenFresh(token: string): Promise<AuthenticatedUser> {
     return this.client.verifierJetonSansCache(token);
   }

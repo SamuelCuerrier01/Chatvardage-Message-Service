@@ -5,13 +5,11 @@ import { AppModule } from './app.module';
 import { verifierSecretsProduction } from './partage/secrets-production';
 
 async function bootstrap(): Promise<void> {
-  // Avant tout : pas de démarrage en production avec des secrets de dev.
   verifierSecretsProduction({
     jetonInterne: true,
     urlsAvecMotDePasse: ['DATABASE_URL', 'REDIS_URL'],
   });
   const app = await NestFactory.create(AppModule);
-  // SIGTERM (docker stop) : fermeture propre (Prisma, Redis, minuteurs).
   app.enableShutdownHooks();
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

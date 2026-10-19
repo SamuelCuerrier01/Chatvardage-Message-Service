@@ -36,38 +36,29 @@ export class RoomMessagesService {
     roomId: string,
     dto: CreateRoomMessageDto,
   ): Promise<RoomMessage> {
-    // Avant l'appel à Room-Service : un envoi en rafale ne doit pas non plus
-    // le solliciter à chaque tentative.
     this.limiteEnvoi.verifier(acteur.id);
     const acces = await this.rooms.verifierAcces(roomId, acteur);
     this.exigerLecture(acces.peutLire, 'y envoyer un message');
-    // Salon lisible mais en écriture réservée (ex. #annonces).
     if (!acces.peutEcrire) {
       throw new ForbiddenException(
         'Seuls les modérateurs peuvent écrire dans ce salon',
       );
     }
 
-    // 1) PostgreSQL fait foi.
     const message = await this.prisma.roomMessage.create({
       data: { roomId, authorId: acteur.id, content: dto.content },
     });
 
-    // 2) L'événement n'est publié qu'après l'écriture réussie en base.
     await this.redis.publish('room-message.created', message);
     return message;
   }
 
-  /** Message créé par un admin (`acteur`) au nom de `dto.authorId`, qui
-   * doit pouvoir écrire lui-même dans ce salon. */
   async createForAdmin(
     acteur: Acteur,
     roomId: string,
     dto: CreateAdminRoomMessageDto,
     jeton: string,
   ): Promise<RoomMessage> {
-    // Son rôle global réel compte pour Room-Service (un admin global a tous
-    // les droits, y compris dans un salon en écriture réservée).
     const roleAuteur = await this.destinataires.roleDe(dto.authorId, jeton);
     const acces = await this.rooms.verifierAcces(roomId, acteur);
     this.exigerLecture(acces.peutLire, 'y envoyer un message');
@@ -90,10 +81,6 @@ export class RoomMessagesService {
         'Auteur sans droit d’écriture dans ce salon',
       );
     }
-    // Contrairement à create(), la limite (celle de l'auteur, pas de l'admin)
-    // n'est décomptée qu'une fois la requête jugée valide : une erreur de
-    // l'admin ne doit pas bloquer l'auteur. Pas de sondage
-    // d'Authentification à craindre, la route est réservée aux admins.
     this.limiteEnvoi.verifier(dto.authorId);
 
     const message = await this.prisma.roomMessage.create({
@@ -142,9 +129,6 @@ export class RoomMessagesService {
       ],
     });
 
-    // Même convention que MessagesService.history() : on récupère d'abord les
-    // messages les plus récents pour que `take` sélectionne la bonne page,
-    // puis on renvoie l'ordre chronologique attendu par l'interface.
     return query.direction === 'after' ? messages : messages.reverse();
   }
 
@@ -170,7 +154,6 @@ export class RoomMessagesService {
     id: string,
     dto: UpdateRoomMessageDto,
   ): Promise<RoomMessage> {
-    // Un membre expulsé (ou qui n'a plus accès) ne modifie plus ses messages.
     await this.verifierLecture(acteur, roomId);
     const existing = await this.prisma.roomMessage.findUnique({
       where: { id },
@@ -191,7 +174,6 @@ export class RoomMessagesService {
     return message;
   }
 
-  /** L'auteur, ou un modérateur du serveur (propriétaire, admin). */
   async remove(acteur: Acteur, roomId: string, id: string): Promise<void> {
     const acces = await this.verifierLecture(acteur, roomId);
     const existing = await this.prisma.roomMessage.findUnique({
@@ -215,7 +197,6 @@ export class RoomMessagesService {
     });
   }
 
-  /** Salons supprimés dans Room-Service (route interne) : leurs messages. */
   async purgerSalons(salonIds: string[]): Promise<number> {
     const { count } = await this.prisma.roomMessage.deleteMany({
       where: { roomId: { in: salonIds } },
@@ -223,7 +204,6 @@ export class RoomMessagesService {
     return count;
   }
 
-  /** Compte supprimé (route interne) : les messages qu'il a écrits. */
   async supprimerAuteur(authorId: string): Promise<number> {
     const { count } = await this.prisma.roomMessage.deleteMany({
       where: { authorId },
@@ -231,7 +211,6 @@ export class RoomMessagesService {
     return count;
   }
 
-  /** Exige la lecture du salon ; renvoie l'accès (ex. peutModerer). */
   private async verifierLecture(
     acteur: Acteur,
     roomId: string,

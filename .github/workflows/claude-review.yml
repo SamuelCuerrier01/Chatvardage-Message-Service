@@ -8,39 +8,6 @@ permissions:
   contents: read
   pull-requests: write
 
-# Actions épinglées sur un SHA de commit et CLI npm sur une version exacte :
-# un tag ou une version « latest » peut être republié(e) par un tiers (supply-chain),
-# alors que ce workflow a accès aux jetons Claude/Copilot et à l'écriture des PR.
-# Mise à jour : `git ls-remote --tags https://github.com/actions/<action>` et
-# `npm view <paquet> version`, puis remplacer SHA/commentaire/version ensemble.
-# Fallbacks : Claude -> Copilot -> Codex (ChatGPT Plus), à l'ouverture,
-# à chaque push sur une PR et à sa réouverture. Le suivant ne tourne que
-# si le précédent n'a pas publié de revue, y compris après un timeout.
-#
-# Configuration Codex Plus (dépôt privé, PR internes de confiance uniquement) :
-# 1. Créer Settings > Environments > codex-review, sans approbation obligatoire
-#    si le fallback doit partir automatiquement. Réservé à ce dépôt privé.
-# 2. Depuis une connexion CLI dédiée à ce CI, utiliser un dossier d'auth distinct
-#    de celui de l'app : CODEX_HOME=/chemin/prive/codex-ci codex login.
-#    Dans /chemin/prive/codex-ci/config.toml, définir avant le login :
-#    cli_auth_credentials_store = "file"
-# 3. Ajouter le contenu de /chemin/prive/codex-ci/auth.json au secret
-#    d'environnement CODEX_AUTH_JSON. Ne pas commiter ni afficher ce fichier.
-#    La connexion doit utiliser auth_mode=chatgpt et contenir un refresh_token.
-# 4. Créer un PAT GitHub fine-grained, limité à ce dépôt, permission
-#    Environments: read and write; l'organisation peut devoir l'approuver.
-#    Ajouter ce PAT au secret d'environnement CODEX_AUTH_STORAGE_TOKEN.
-#    GITHUB_TOKEN seul ne permet pas d'actualiser le secret d'authentification.
-# 5. Ne pas utiliser cette même connexion Codex dans l'app ou un autre CI :
-#    le job actualise CODEX_AUTH_JSON après chaque utilisation et sérialise
-#    les rotations. Les secrets d'environnement sont lus au démarrage du job,
-#    contrairement aux secrets de dépôt lus à la mise en file du workflow.
-#    En cas de connexion expirée/révoquée, refaire le login et remplacer le secret.
-#    Les revues consomment le quota Codex de ton abonnement Plus.
-# Documentation : https://learn.chatgpt.com/docs/auth/ci-cd-auth
-# Secrets GitHub : https://docs.github.com/en/actions/reference/security/secrets
-# Le prompt de revue Codex reste directement dans le job ci-dessous.
-#
 jobs:
   claude-review:
     runs-on: ubuntu-latest
@@ -126,7 +93,6 @@ jobs:
               || needs.copilot-fallback-review.outputs.fallback_required == 'true') }}
     runs-on: ubuntu-latest
     environment: codex-review
-    # Une seule rotation des identifiants Plus à la fois, toutes PR confondues.
     concurrency:
       group: codex-plus-auth-${{ github.repository }}
       cancel-in-progress: false
@@ -161,7 +127,6 @@ jobs:
           mkdir -p "$CODEX_HOME"
           printf '%s' "$CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"
           jq -e '.auth_mode == "chatgpt" and (.tokens.refresh_token | type == "string" and length > 0)' "$CODEX_HOME/auth.json" > /dev/null
-          # Masquer également les valeurs individuelles du JSON dans les logs.
           jq -r '.tokens[] | select(type == "string" and length > 0)' "$CODEX_HOME/auth.json" |
             while IFS= read -r token; do
               printf '::add-mask::%s\n' "$token"
@@ -189,7 +154,6 @@ jobs:
           CODEX_HOME: ${{ runner.temp }}/codex-review
           GH_TOKEN: ${{ secrets.CODEX_AUTH_STORAGE_TOKEN }}
         run: |
-          # Écrire la copie actualisée, jamais la valeur initiale du secret.
           jq -e '.auth_mode == "chatgpt" and (.tokens.refresh_token | type == "string" and length > 0)' "$CODEX_HOME/auth.json" > /dev/null
           gh secret set CODEX_AUTH_JSON --repo "$GITHUB_REPOSITORY" --env codex-review \
             < "$CODEX_HOME/auth.json"

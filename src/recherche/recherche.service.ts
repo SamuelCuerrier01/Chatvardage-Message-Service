@@ -15,7 +15,6 @@ export type ResultatRecherche =
 
 export type PageRecherche = {
   results: ResultatRecherche[];
-  /** À renvoyer en `cursor` pour la page suivante ; `null` à la fin. */
   nextCursor: string | null;
 };
 
@@ -31,8 +30,6 @@ export type ResumeRecherche = {
 
 type Position = { createdAt: Date; id: string };
 
-/** `%`, `_` et `\` pris littéralement dans le motif LIKE de Prisma. */
-/** Message de bienvenue de #annonces (migration 20260924110000_message_bienvenue). */
 export const MESSAGE_BIENVENUE_ID = '00000000-0000-4000-8000-000000000101';
 
 export const echapperMotif = (texte: string) =>
@@ -52,28 +49,15 @@ export function decoderCurseur(curseur: string): Position {
   return { createdAt, id };
 }
 
-/** Du plus récent au plus ancien, l'identifiant départageant les égalités. */
 const plusRecentDAbord = (a: Position, b: Position) =>
   b.createdAt.getTime() - a.createdAt.getTime() ||
   (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
-/** Où chercher : les DM retenus (`null` : aucun) et les salons retenus. */
 type Portee = {
   dm: Prisma.PrivateMessageWhereInput | null;
   salonIds: string[];
 };
 
-/**
- * Recherche textuelle dans les seules conversations accessibles : les DM
- * dont l'utilisateur est expéditeur ou destinataire, et les salons qu'il
- * peut lire selon Room-Service (aucune règle de droits recodée ici). Si
- * Room-Service ne répond pas, la recherche échoue (503) plutôt que de
- * renvoyer des résultats incomplets ou trop larges.
- *
- * `conversationId` (`dm:<interlocuteur>` ou `room:<salon>`) limite la
- * recherche à cette conversation ; un salon illisible donne 403 (404 s'il
- * n'existe pas), comme son historique.
- */
 @Injectable()
 export class RechercheService {
   constructor(
@@ -81,7 +65,6 @@ export class RechercheService {
     private readonly rooms: RoomsClientService,
   ) {}
 
-  /** Agrégats complets, sans charger les messages ni exposer de salon illisible. */
   async resumer(acteur: Acteur, texte: string): Promise<ResumeRecherche> {
     const lisibles = await this.rooms.salonsLisibles(acteur);
     const contenu = {
@@ -157,8 +140,6 @@ export class RechercheService {
       contains: echapperMotif(query.q),
       mode: 'insensitive' as const,
     };
-    // Pagination par position (createdAt, id) : ni doublon ni trou entre
-    // deux pages, même si des messages arrivent entre-temps.
     const avant = apres
       ? {
           OR: [
@@ -171,7 +152,6 @@ export class RechercheService {
       { createdAt: 'desc' },
       { id: 'desc' },
     ];
-    // Un de plus que demandé, pour savoir s'il reste une page.
     const take = query.limit + 1;
 
     const { dm, salonIds } = await this.portee(acteur, query.conversationId);
@@ -225,14 +205,6 @@ export class RechercheService {
     };
   }
 
-  /**
-   * Tant qu'il n'est pas modifié, le message de bienvenue est affiché dans
-   * la langue de l'app (Frontend et Mobile le remplacent par leur
-   * traduction) : son contenu en base ne correspond pas au texte lu, et
-   * « alo » le trouvait par « Salons » sans rien à surligner. Exclu des
-   * résultats et des totaux ; une version modifiée (updatedAt ≠ createdAt)
-   * est affichée telle quelle et reste cherchable.
-   */
   private sansBienvenueTraduite(): Prisma.RoomMessageWhereInput {
     return {
       NOT: {
@@ -253,7 +225,6 @@ export class RechercheService {
         salonIds: lisibles.map((s) => s.salonId),
       };
     }
-    // Forme déjà validée par le DTO : `dm:<id>` ou `room:<id>`.
     const [genre, cible] = conversationId.split(':');
     if (genre === 'dm') {
       return {

@@ -47,30 +47,14 @@ import { MessagesService } from './messages.service';
 
 interface SocketData {
   userId?: string;
-  // Rôle global (Authentification), transmis à Room-Service pour les
-  // droits des salons (ex. un admin peut écrire dans #annonces).
   role?: AuthenticatedUser['role'];
-  // Dernière présence annoncée sur ce socket (voir updatePresence), pour
-  // la réponse à `presence.suivre`.
   presence?: PresenceEvent['statut'];
-  // Dernier `presence.suivre` (voir DELAI_MIN_SUIVI_PRESENCE_MS).
   dernierSuivi?: number;
-  // Salons rejoints par ce socket (id du salon -> id de son serveur), pour
-  // retirer le socket d'un salon dont il perd l'accès (voir
-  // revoquerAccesPerdus).
   salons?: Record<string, string>;
-  // Dernier 'typing' relayé par cible (room:<id> / user:<id>), voir
-  // DELAI_MIN_SAISIE_MS.
   saisies?: Record<string, { isTyping: boolean; temps: number }>;
 }
 
-// Événements émis depuis un socket (les autres passent par this.server) :
-// indicateur de frappe relayé, états de la connexion.
 interface EvenementsVersClient {
-  // Authentification du socket terminée (voir handleConnection) : le client
-  // peut maintenant annoncer sa présence et rejoindre ses salons. Avant, ses
-  // événements sont refusés (voir requireUserId) — ce qui laissait un client
-  // reconnecté « hors ligne » pour les autres.
   'connexion.prete': () => void;
   typing: (payload: {
     userId: string;
@@ -78,11 +62,7 @@ interface EvenementsVersClient {
     targetId: string;
     isTyping: boolean;
   }) => void;
-  // Le socket a été retiré de ce salon (accès perdu) : le client l'oublie et
-  // le rejoindra de nouveau s'il le retrouve dans ses salons accessibles.
   'room-message.revoked': (payload: { roomId: string }) => void;
-  // Jeton refusé par Authentification (révoqué, expiré, compte supprimé) :
-  // le socket est ensuite déconnecté ; le client vérifie sa session.
   'session.revoquee': () => void;
 }
 
@@ -118,47 +98,18 @@ const PRIVATE_MESSAGE_CHANNELS = [
   'private-message.delivered',
 ];
 
-// Présence en temps réel : diffusée à tous les clients connectés (la
-// présence est déjà publique pour tout utilisateur authentifié, voir
-// GET /api/config-utilisateur/publiques). Passe par Redis pour atteindre les
-// clients de toutes les instances de Message-Service.
 const PRESENCE_CHANNEL = 'presence.changed';
-// Profil public modifié (alias, avatar, pseudo) : diffusé à tous, chaque
-// client recharge ce profil (voir updateProfil).
 const PROFIL_CHANNEL = 'profil.changed';
-// Un `profil.update` est diffusé à TOUS les clients, et chacun recharge
-// alors ce profil (2 requêtes HTTP) : au plus un envoi par socket sur cette
-// fenêtre, pour qu'un client ne puisse pas faire générer une avalanche de
-// requêtes aux autres. Les demandes rapprochées ne sont pas perdues : une
-// seule est envoyée à la fin de la fenêtre (le client relit alors l'état
-// le plus récent).
 export const DELAI_MIN_PROFIL_MS = 5000;
-// 'typing' : le client en envoie un à chaque frappe, et un message privé peut
-// viser n'importe qui. Un CHANGEMENT d'état (commence / arrête d'écrire) est
-// toujours relayé ; le même état répété vers la même cible, au plus une fois
-// par fenêtre (les destinataires gardent l'état jusqu'au changement).
 export const DELAI_MIN_SAISIE_MS = 1000;
-// 'presence.update' : chaque envoi est publié sur Redis puis relayé à tous
-// ceux qui suivent l'utilisateur. Au plus un envoi par socket sur cette
-// fenêtre ; une demande trop rapprochée n'est pas perdue : l'état le plus
-// récent du socket part à la fin de la fenêtre (même principe que
-// `profil.update`).
 export const DELAI_MIN_PRESENCE_MS = 1000;
-// 'presence.suivre' : le client le renvoie quand les personnes affichées
-// changent (regroupé côté client) ; au plus une fois par fenêtre.
 export const DELAI_MIN_SUIVI_PRESENCE_MS = 1000;
-// Un socket n'était authentifié qu'à la connexion : un jeton révoqué (mot de
-// passe changé, compte supprimé) ou expiré continuait de recevoir messages
-// et présence tant que le socket restait ouvert. Chaque socket est donc
-// revalidé à cet intervalle (voir revaliderSockets) ; le cache du client
-// d'authentification limite le coût.
 export const INTERVALLE_REVALIDATION_MS = 60_000;
 
 interface EvenementServeur {
   serveurId: string;
   raison: RaisonServeur;
   cibleId: string | null;
-  /** À tous les clients connectés (serveur par défaut), sans liste. */
   tous?: boolean;
   utilisateurIds: string[];
 }
@@ -168,9 +119,6 @@ interface PresenceEvent {
   statut: 'en-ligne' | 'hors-ligne';
 }
 
-// Accusés de lecture (voir EtatLectureService) : un DM lu est signalé aux
-// deux personnes (l'autre voit ✓✓, mes autres appareils effacent leurs
-// non-lus), un salon lu à ceux qui l'ont rejoint (« Vu par »).
 const LECTURE_CHANNEL = CANAL_LECTURE;
 
 const ROOM_MESSAGE_CHANNELS = [
@@ -179,14 +127,6 @@ const ROOM_MESSAGE_CHANNELS = [
   'room-message.deleted',
 ];
 
-/**
- * Utilisateurs dont l'accès aux salons d'un serveur a pu changer :
- * - `expulse` / `membres` (départ, rôle modifié) : la personne visée ;
- * - `salons` (salon rendu réservé ou supprimé) et `supprime` : tous les
- *   destinataires.
- * Une arrivée (`membres`) n'enlève aucun accès : la revérification ne coûte
- * alors qu'un appel pour les salons déjà rejoints par cette personne.
- */
 export function utilisateursARevalider(event: EvenementServeur): string[] {
   switch (event.raison) {
     case 'expulse':
@@ -209,11 +149,9 @@ export function isAllowedOrigin(
     .map((value) => value.trim())
     .filter(Boolean);
 
-  // Les clients non-navigateurs (ex. Electron/CLI) peuvent ne pas envoyer Origin.
   callback(null, origin === undefined || allowedOrigins.includes(origin));
 }
 
-/** Refus d'Authentification (jeton absent, invalide, expiré ou révoqué). */
 function estJetonRefuse(erreur: unknown): boolean {
   return (
     erreur instanceof UnauthorizedException ||
@@ -222,12 +160,10 @@ function estJetonRefuse(erreur: unknown): boolean {
   );
 }
 
-// Erreurs HTTP (429, 404, 403, 400…) transmises au client avec leur code.
 @UseFilters(new ExceptionsWsFilter())
 @WebSocketGateway({
   namespace: '/messages',
   cors: {
-    // Évalue CORS_ORIGINS au moment de la connexion plutôt qu'à l'import.
     origin: isAllowedOrigin,
     credentials: false,
   },
@@ -241,16 +177,11 @@ export class MessagesGateway
 {
   private readonly logger = new Logger(MessagesGateway.name);
   private minuteurRevalidation?: ReturnType<typeof setInterval>;
-  // Une passe de revalidation peut durer plus que l'intervalle (beaucoup de
-  // sockets, Auth lente) : les passes ne se chevauchent pas.
   private revalidationEnCours = false;
-  // Limite de `profil.update` par socket (voir DELAI_MIN_PROFIL_MS).
   private readonly limitesProfil = new Map<
     string,
     { dernierEnvoi: number; envoiDiffere?: ReturnType<typeof setTimeout> }
   >();
-  // Limite de `presence.update` par socket (voir DELAI_MIN_PRESENCE_MS) ;
-  // `statut` : le dernier demandé, celui que l'envoi différé diffusera.
   private readonly limitesPresence = new Map<
     string,
     {
@@ -296,12 +227,6 @@ export class MessagesGateway
     clearInterval(this.minuteurRevalidation);
   }
 
-  /**
-   * Revalide le jeton de chaque socket authentifié. Jeton refusé : le socket
-   * reçoit `session.revoquee` puis est déconnecté. Authentification
-   * indisponible : le socket est gardé (une panne d'Auth ne doit pas couper
-   * tout le monde). Sinon, le rôle global est mis à jour (droits des salons).
-   */
   async revaliderSockets(): Promise<void> {
     if (this.revalidationEnCours) return;
     this.revalidationEnCours = true;
@@ -318,8 +243,6 @@ export class MessagesGateway
         EvenementsVersClient,
         SocketData
       >[];
-    // Sockets gardés faute de réponse d'Authentification : un seul
-    // avertissement par passe, pour qu'une panne ne passe pas inaperçue.
     let gardesSansVerification = 0;
     for (const socket of sockets) {
       if (!(await this.revaliderSocket(socket, false))) {
@@ -333,13 +256,6 @@ export class MessagesGateway
     }
   }
 
-  /**
-   * Toutes les sessions de `userId` viennent d'être invalidées (mot de passe
-   * changé, déconnexion de tous ou des autres appareils, compte supprimé) :
-   * ses sockets sont revérifiés tout de suite, sans le cache. Ceux dont le
-   * jeton est révoqué reçoivent `session.revoquee` et sont fermés ; celui de
-   * l'appareil qui vient d'obtenir un nouveau jeton reste ouvert.
-   */
   async revaliderSocketsUtilisateur(userId: string): Promise<void> {
     const sockets = (await this.server
       .in(`user:${userId}`)
@@ -359,19 +275,12 @@ export class MessagesGateway
     }
   }
 
-  /**
-   * Revérifie le jeton d'un socket ; un jeton refusé ferme le socket (après
-   * `session.revoquee`). Renvoie faux si Authentification n'a pas répondu
-   * (socket gardé sans vérification).
-   */
   private async revaliderSocket(
     socket: RemoteSocket<EvenementsVersClient, SocketData>,
     sansCache: boolean,
   ): Promise<boolean> {
-    // Encore en cours d'authentification (voir handleConnection).
     if (!socket.data.userId) return true;
     try {
-      // Un jeton absent est refusé comme un jeton révoqué.
       const jeton = this.readSocketToken(socket);
       const user = sansCache
         ? await this.jwt.verifyTokenFresh(jeton)
@@ -400,8 +309,6 @@ export class MessagesGateway
         error instanceof Error ? error.message : 'erreur inconnue';
 
       this.logger.warn(`Connexion refusée [${client.id}]: ${message}`);
-      // Jeton refusé (et non Auth indisponible) : le client ne doit pas
-      // retenter indéfiniment avec ce jeton, il vérifie sa session.
       if (estJetonRefuse(error)) client.emit('session.revoquee');
       client.disconnect(true);
       return;
@@ -409,18 +316,9 @@ export class MessagesGateway
     client.emit('connexion.prete');
   }
 
-  /**
-   * Dernier socket d'un utilisateur fermé (app quittée, plantage, réseau
-   * coupé) : il est aussitôt signalé hors ligne aux autres, sans attendre
-   * l'expiration de son signe de vie côté User-Config-Service (~90 s).
-   */
   async handleDisconnect(client: AuthenticatedSocket): Promise<void> {
     this.logger.debug(`Client déconnecté: ${client.id}`);
-    // Un envoi de profil différé part quand même : le changement a bien eu
-    // lieu, seul le socket est parti.
     this.limitesProfil.delete(client.id);
-    // Une présence différée, elle, ne doit pas partir après le « hors ligne »
-    // de la déconnexion (ci-dessous).
     clearTimeout(this.limitesPresence.get(client.id)?.envoiDiffere);
     this.limitesPresence.delete(client.id);
     const userId = client.data?.userId;
@@ -440,11 +338,6 @@ export class MessagesGateway
     }
   }
 
-  /**
-   * Profil public modifié par l'utilisateur (alias, avatar, pseudo), déjà
-   * enregistré par le client : les autres rechargent ce profil. Aucune
-   * donnée n'est transmise, seulement l'identifiant (celui du socket).
-   */
   @SubscribeMessage('profil.update')
   async updateProfil(
     @ConnectedSocket() client: AuthenticatedSocket,
@@ -457,8 +350,6 @@ export class MessagesGateway
       await this.redis.publish(PROFIL_CHANNEL, { userId });
       return { ok: true };
     }
-    // Trop tôt : un seul envoi différé à la fin de la fenêtre, quel que soit
-    // le nombre de demandes entre-temps.
     limite.envoiDiffere ??= setTimeout(
       () => {
         limite.envoiDiffere = undefined;
@@ -472,14 +363,6 @@ export class MessagesGateway
     return { ok: true };
   }
 
-  /**
-   * Présence des seules personnes que le client affiche : le socket rejoint
-   * la room `presence:<id>` de chacune (et quitte les autres), puis reçoit
-   * qui est en ligne parmi elles. Les `presence.changed` ne sont envoyés
-   * qu'à ces rooms : diffuser chaque changement à tous les clients coûtait
-   * N envois par changement (N², tout le monde étant dans le serveur par
-   * défaut).
-   */
   @SubscribeMessage('presence.suivre')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async suivrePresence(
@@ -504,8 +387,6 @@ export class MessagesGateway
     }
     await client.join([...suivis].map((id) => `presence:${id}`));
 
-    // Sans adaptateur Redis de Socket.IO, seuls les clients de CETTE
-    // instance sont vus : suffisant en une seule instance (Infra).
     const enLigne: string[] = [];
     await Promise.all(
       [...suivis].map(async (id) => {
@@ -522,11 +403,6 @@ export class MessagesGateway
     return { enLigne };
   }
 
-  /**
-   * Présence choisie par l'utilisateur, déjà enregistrée par le client dans
-   * User-Config-Service : relayée tout de suite aux autres clients. Un
-   * utilisateur ne peut annoncer que SA présence (identité du socket).
-   */
   @SubscribeMessage('presence.update')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async updatePresence(
@@ -548,7 +424,6 @@ export class MessagesGateway
       });
       return { ok: true };
     }
-    // Trop tôt : un seul envoi différé, avec le dernier état demandé.
     limite.statut = dto.statut;
     limite.envoiDiffere ??= setTimeout(
       () => {
@@ -631,13 +506,9 @@ export class MessagesGateway
   ): void {
     const userId = this.requireUserId(client);
 
-    // Événement purement éphémère : ni persisté, ni routé par Redis/Postgres.
     const room =
       dto.scope === 'room' ? `room:${dto.targetId}` : `user:${dto.targetId}`;
 
-    // Dans un salon, seul un socket qui l'a rejoint (droits vérifiés par
-    // joinRoom) peut signaler qu'il écrit : sinon, n'importe qui pourrait
-    // afficher « X est en train d'écrire » dans un salon sans y avoir accès.
     if (dto.scope === 'room' && !client.rooms.has(room)) {
       return;
     }
@@ -664,7 +535,6 @@ export class MessagesGateway
   private requireActeur(client: AuthenticatedSocket): Acteur {
     return {
       id: this.requireUserId(client),
-      // Toujours défini avec userId (voir handleConnection).
       role: client.data.role ?? 'utilisateur',
     };
   }
@@ -672,9 +542,6 @@ export class MessagesGateway
   private requireUserId(client: AuthenticatedSocket): string {
     const userId = client.data.userId;
 
-    // Socket.IO peut recevoir un événement pendant que handleConnection()
-    // termine la validation distante du JWT. On refuse alors explicitement
-    // l'action : aucune écriture n'est possible avant l'authentification.
     if (!userId) {
       throw new WsException('Utilisateur non authentifié');
     }
@@ -809,7 +676,6 @@ export class MessagesGateway
     this.server.emit(PROFIL_CHANNEL, { userId: event.userId });
   }
 
-  /** Relaie un état de lecture qui avance (voir LECTURE_CHANNEL). */
   private broadcastLectureEvent(payload: string): void {
     const event = this.lireJson(payload) as Partial<EvenementLecture> | null;
     if (
@@ -840,7 +706,6 @@ export class MessagesGateway
     }
   }
 
-  /** Relaie un changement de serveur à chacun des membres concernés. */
   private broadcastServeurEvent(payload: string): void {
     const event = this.lireJson(payload) as Partial<EvenementServeur> | null;
     if (
@@ -866,8 +731,6 @@ export class MessagesGateway
         this.server.to(`user:${userId}`).emit(SERVEUR_CHANNEL, message);
       }
     }
-    // Avant la revérification ci-dessous : elle doit interroger Room-Service,
-    // pas le cache.
     this.rooms.oublierServeur(event.serveurId);
     this.revoquerAccesPerdus(event as EvenementServeur).catch(
       (erreur: unknown) => {
@@ -878,20 +741,8 @@ export class MessagesGateway
     );
   }
 
-  /**
-   * Retire des salons Socket.IO les sockets qui viennent d'en perdre
-   * l'accès. Sans ça, un membre expulsé (ou dont le salon devient réservé
-   * aux modérateurs) continuait de recevoir les messages en direct jusqu'à
-   * sa reconnexion, puisque les droits ne sont vérifiés qu'au
-   * `room-message.join`. Room-Service reste la seule source de vérité :
-   * on lui redemande l'accès, uniquement pour les utilisateurs concernés et
-   * les salons de ce serveur.
-   */
   private async revoquerAccesPerdus(event: EvenementServeur): Promise<void> {
-    // `server` n'est pas typé par événement (voir broadcast*) : on retrouve
-    // ici le type des données posées sur nos sockets.
     type SocketDistant = RemoteSocket<EvenementsVersClient, SocketData>;
-    // Salons du serveur par défaut (`tous`) : tout socket peut être concerné.
     const tousLesSockets =
       event.tous && (event.raison === 'salons' || event.raison === 'supprime');
     const sockets = tousLesSockets
@@ -906,7 +757,6 @@ export class MessagesGateway
             ),
           )
         ).flat();
-    // Accès gardés faute de réponse de Room-Service (voir peutEncoreLire).
     let gardesSansVerification = 0;
     for (const socket of sockets) {
       const userId = socket.data.userId;
@@ -938,14 +788,6 @@ export class MessagesGateway
     }
   }
 
-  /**
-   * Accès toujours valide ? `false` si Room-Service le refuse ou si le salon
-   * n'existe plus ; `null` si Room-Service ne répond pas. Dans ce cas le
-   * socket reste dans le salon (même compromis que pour Authentification
-   * dans revaliderSockets) : le retirer le priverait du temps réel pendant
-   * toute la panne, puisque rejoindre un salon demande aussi Room-Service.
-   * L'accès est revérifié au prochain changement du serveur.
-   */
   private async peutEncoreLire(
     salonId: string,
     acteur: Acteur,
@@ -976,8 +818,6 @@ export class MessagesGateway
       return;
     }
 
-    // Seulement aux clients qui suivent cet utilisateur (presence.suivre)
-    // et à ses propres autres sockets.
     this.server
       .to(`presence:${candidat.userId}`)
       .to(`user:${candidat.userId}`)

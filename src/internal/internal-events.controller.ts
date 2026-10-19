@@ -16,16 +16,8 @@ import {
 } from './internal-token.guard';
 
 export const SERVEUR_CHANNEL = 'serveur.change';
-// Toutes les sessions d'un compte viennent d'être invalidées (voir
-// MessagesGateway.revaliderSocketsUtilisateur).
 export const SESSIONS_CHANNEL = 'sessions.revoquees';
 
-/**
- * Point d'entrée des événements temps réel produits par d'autres services
- * (Room-Service n'a ni Redis ni Socket.IO). Publie sur Redis ; la passerelle
- * Socket.IO de chaque instance relaie aux destinataires (voir
- * MessagesGateway, `serveur.change`).
- */
 @ApiTags('Interne')
 @ApiHeader({ name: EN_TETE_JETON_INTERNE, required: true })
 @Controller('internal')
@@ -58,7 +50,6 @@ export class InternalEventsController {
   async sessionsRevoquees(
     @Param('userId', new ParseUUIDPipe()) userId: string,
   ): Promise<{ accepte: true }> {
-    // Par Redis : chaque instance revérifie les sockets de cet utilisateur.
     await this.redis.publish(SESSIONS_CHANNEL, { userId });
     return { accepte: true };
   }

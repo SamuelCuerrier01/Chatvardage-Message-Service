@@ -16,7 +16,6 @@ describe('RoomMessagesService', () => {
     createdAt: new Date(),
     updatedAt: new Date(),
   };
-  // Réponse de la route interne de Room-Service.
   const lecteurEcrivain = {
     salonId: 'r1',
     serveurId: 's1',

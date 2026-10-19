@@ -1,7 +1,3 @@
-# Lancer Message-Service seul, avec son PostgreSQL et son Redis
-# (docker compose -f compose.local.yml up --build). Authentification et
-# Room-Service sont attendus sur l'hôte (ports 3001 et 3003) ; la stack
-# complète est dans A26_5A6_01-Infra.
 services:
   message-service:
     build: .
@@ -16,12 +12,10 @@ services:
       ROOM_SERVICE_URL: ${ROOM_SERVICE_URL:-http://host.docker.internal:3003}
       ROOM_SERVICE_TIMEOUT_MS: ${ROOM_SERVICE_TIMEOUT_MS:-3000}
       ROOM_ACCESS_CACHE_TTL_MS: ${ROOM_ACCESS_CACHE_TTL_MS:-10000}
-      # Même valeur que dans Room-Service (route /api/internal/*).
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-jeton-interne-local}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
     ports:
       - "3004:3004"
-    # Linux Docker Engine 20.10+ requis pour la valeur spéciale host-gateway.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

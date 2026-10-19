@@ -130,7 +130,6 @@ describe('routes internes', () => {
     expect(
       await erreurs({ serveurId: '', raison: 'piratage', utilisateurIds: [1] }),
     ).toEqual(['serveurId', 'raison', 'utilisateurIds']);
-    // `tous` : la liste devient facultative.
     expect(
       await erreurs({ serveurId: 's', raison: 'salons', tous: true }),
     ).toEqual([]);

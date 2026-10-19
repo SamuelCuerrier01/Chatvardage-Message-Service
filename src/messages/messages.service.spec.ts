@@ -258,8 +258,6 @@ describe('MessagesService', () => {
     const jan1 = new Date('2026-01-01');
     const jan2 = new Date('2026-01-02');
     const jan3 = new Date('2026-01-03');
-    // Envoyés : dernier à u2 le 1er, à u3 le 2. Reçus : de u2 le 3 (plus
-    // récent que l'envoi), de u3 le 1er (plus ancien), et une date nulle.
     prisma.privateMessage.groupBy
       .mockResolvedValueOnce([
         { recipientId: 'u2', _max: { createdAt: jan1 } },
@@ -307,8 +305,6 @@ describe('MessagesService', () => {
       createdAt: date,
       updatedAt: date,
     };
-    // Même milliseconde que withU2 mais id plus petit : départagé par l'ordre
-    // (createdAt desc, id desc) de la requête.
     const sameMsWithU2 = { ...withU2, id: 'm2', content: 'doublon' };
     const withU3 = {
       id: 'm1',

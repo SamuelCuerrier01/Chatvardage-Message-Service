@@ -43,7 +43,6 @@ describe('InternalDonneesController', () => {
     expect(messages.supprimerUtilisateur).toHaveBeenCalledWith('u1');
     expect(roomMessages.supprimerAuteur).toHaveBeenCalledWith('u1');
     expect(lecture.supprimerUtilisateur).toHaveBeenCalledWith('u1');
-    // Plus aucun nouveau message ne doit lui parvenir.
     expect(destinataires.oublier).toHaveBeenCalledWith('u1');
   });
 
