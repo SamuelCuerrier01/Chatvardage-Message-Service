@@ -1,3 +1,11 @@
+jest.mock('ioredis', () => ({
+  __esModule: true,
+  default: jest.fn().mockImplementation(() => ({
+    status: 'ready',
+    publish: jest.fn().mockRejectedValue(new Error('redis down')),
+  })),
+}));
+
 import {
   HttpException,
   HttpStatus,
@@ -8,13 +16,6 @@ import {
 } from '@nestjs/common';
 import { RedisService } from '../redis.service';
 
-jest.mock('ioredis', () => ({
-  __esModule: true,
-  default: jest.fn().mockImplementation(() => ({
-    status: 'ready',
-    publish: jest.fn().mockRejectedValue(new Error('redis down')),
-  })),
-}));
 import { MessagesService } from './messages.service';
 
 describe('MessagesService', () => {
@@ -492,17 +493,13 @@ describe('MessagesService', () => {
       await expect(
         service.removeForAdmin('m1', 'admin'),
       ).resolves.toBeUndefined();
-      expect(error).toHaveBeenCalledTimes(5);
-      for (const canal of [
+      expect(error.mock.calls.map(([texte]) => texte.split(' ')[1])).toEqual([
         'private-message.created',
         'private-message.updated',
         'private-message.delivered',
         'private-message.deleted',
-      ]) {
-        expect(error).toHaveBeenCalledWith(
-          expect.stringContaining(`Publication ${canal} perdue`),
-        );
-      }
+        'private-message.deleted',
+      ]);
     });
   });
   it('remove not found', async () => {

@@ -1,3 +1,11 @@
+jest.mock('ioredis', () => ({
+  __esModule: true,
+  default: jest.fn().mockImplementation(() => ({
+    status: 'ready',
+    publish: jest.fn().mockRejectedValue(new Error('redis down')),
+  })),
+}));
+
 import {
   HttpException,
   HttpStatus,
@@ -8,14 +16,6 @@ import {
 } from '@nestjs/common';
 import { RedisService } from '../redis.service';
 import { RoomMessagesService } from './room-messages.service';
-
-jest.mock('ioredis', () => ({
-  __esModule: true,
-  default: jest.fn().mockImplementation(() => ({
-    status: 'ready',
-    publish: jest.fn().mockRejectedValue(new Error('redis down')),
-  })),
-}));
 
 describe('RoomMessagesService', () => {
   const msg = {
