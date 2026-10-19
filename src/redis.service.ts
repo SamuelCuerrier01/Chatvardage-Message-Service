@@ -1,8 +1,9 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
+  private readonly logger = new Logger(RedisService.name);
   readonly publisher: Redis;
   readonly subscriber: Redis;
   private readonly connectionPromises = new WeakMap<Redis, Promise<void>>();
@@ -41,6 +42,16 @@ export class RedisService implements OnModuleDestroy {
   async publish(channel: string, payload: unknown): Promise<number> {
     await this.ensureConnected(this.publisher);
     return this.publisher.publish(channel, JSON.stringify(payload));
+  }
+
+  async publierApresEcriture(channel: string, payload: unknown): Promise<void> {
+    try {
+      await this.publish(channel, payload);
+    } catch (erreur) {
+      this.logger.error(
+        `Publication ${channel} perdue après l'écriture en base : ${erreur instanceof Error ? erreur.message : String(erreur)}`,
+      );
+    }
   }
 
   async subscribe(

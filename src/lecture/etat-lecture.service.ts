@@ -330,7 +330,7 @@ export class EtatLectureService {
         lastReadAt: etat.lastReadAt.toISOString(),
         lastReadMessageId: etat.lastReadMessageId ?? null,
       };
-      await this.redis.publish(CANAL_LECTURE, evenement);
+      await this.redis.publierApresEcriture(CANAL_LECTURE, evenement);
     }
     return {
       lastReadAt: etat.lastReadAt,

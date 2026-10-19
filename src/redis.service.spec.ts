@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 
 import { RedisService } from './redis.service';
@@ -133,5 +134,45 @@ describe('RedisService', () => {
     new RedisService();
 
     expect(Redis).toHaveBeenCalledWith('redis://x', expect.any(Object));
+  });
+
+  it('publierApresEcriture publie le contenu sérialisé', async () => {
+    const s = new RedisService();
+
+    await expect(
+      s.publierApresEcriture('private-message.updated', { id: 'm1' }),
+    ).resolves.toBeUndefined();
+
+    expect(publish).toHaveBeenCalledWith(
+      'private-message.updated',
+      JSON.stringify({ id: 'm1' }),
+    );
+  });
+
+  it('publierApresEcriture journalise un échec sans le propager', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    publish.mockRejectedValueOnce(new Error('redis down'));
+    connect.mockRejectedValueOnce('hors ligne');
+    try {
+      const s = new RedisService();
+      const autre = new RedisService();
+
+      await expect(
+        autre.publierApresEcriture('room-message.created', { id: 'm2' }),
+      ).resolves.toBeUndefined();
+      (s.publisher as any).status = 'ready';
+      await expect(
+        s.publierApresEcriture('private-message.created', { id: 'm1' }),
+      ).resolves.toBeUndefined();
+
+      expect(error).toHaveBeenCalledWith(
+        "Publication room-message.created perdue après l'écriture en base : hors ligne",
+      );
+      expect(error).toHaveBeenCalledWith(
+        "Publication private-message.created perdue après l'écriture en base : redis down",
+      );
+    } finally {
+      error.mockRestore();
+    }
   });
 });

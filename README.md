@@ -1,6 +1,6 @@
 # Chatvardage — Messages et temps réel
 
-Microservice NestJS/Prisma : messages privés et de salon, historique paginé, état de lecture et non-lus, recherche, accusés de livraison, Redis Pub/Sub et Socket.IO (namespace `/messages`). Chaque création, modification ou suppression est écrite dans PostgreSQL avant d'être publiée.
+Microservice NestJS/Prisma : messages privés et de salon, historique paginé, état de lecture et non-lus, recherche, accusés de livraison, Redis Pub/Sub et Socket.IO (namespace `/messages`). Chaque création, modification ou suppression est écrite dans PostgreSQL avant d'être publiée. Si la publication Redis échoue après l'écriture, l'échec est journalisé et la requête réussit quand même : les clients récupèrent le changement par REST à leur prochaine lecture.
 
 ## Lancer le service complet
 

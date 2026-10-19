@@ -36,7 +36,7 @@ describe('EtatLectureService', () => {
       verifierAcces: jest.fn().mockResolvedValue({ peutLire: true }),
       salonsLisibles: jest.fn().mockResolvedValue([]),
     };
-    redis = { publish: jest.fn() };
+    redis = { publierApresEcriture: jest.fn() };
     service = new EtatLectureService(prisma, rooms, redis);
   });
 
@@ -402,13 +402,16 @@ describe('EtatLectureService', () => {
         prisma.conversationReadState.createMany.mockResolvedValue(cree);
         prisma.conversationReadState.updateMany.mockResolvedValue(avance);
         await service.marquerDmLu('moi', 'alice');
-        expect(redis.publish).toHaveBeenCalledWith('read-state.updated', {
-          kind: 'dm',
-          targetId: 'alice',
-          userId: 'moi',
-          lastReadAt: t(2).toISOString(),
-          lastReadMessageId: null,
-        });
+        expect(redis.publierApresEcriture).toHaveBeenCalledWith(
+          'read-state.updated',
+          {
+            kind: 'dm',
+            targetId: 'alice',
+            userId: 'moi',
+            lastReadAt: t(2).toISOString(),
+            lastReadMessageId: null,
+          },
+        );
       },
     );
 
@@ -420,12 +423,12 @@ describe('EtatLectureService', () => {
       await expect(service.marquerDmLu('moi', 'alice')).resolves.toMatchObject({
         lastReadAt: t(4),
       });
-      expect(redis.publish).not.toHaveBeenCalled();
+      expect(redis.publierApresEcriture).not.toHaveBeenCalled();
     });
 
     it('état inchangé (déjà lu plus loin) : rien n’est publié', async () => {
       await service.marquerDmLu('moi', 'alice');
-      expect(redis.publish).not.toHaveBeenCalled();
+      expect(redis.publierApresEcriture).not.toHaveBeenCalled();
     });
 
     it("lecteur d'un DM : l'état de l'interlocuteur sur cette conversation", async () => {
@@ -506,13 +509,13 @@ it('publie la position complète du dernier message lu', async () => {
       findMany: jest.fn().mockResolvedValue([]),
     },
   };
-  const redis: any = { publish: jest.fn() };
+  const redis: any = { publierApresEcriture: jest.fn() };
   await new EtatLectureService(prisma, {} as any, redis).marquerDmLu(
     'u1',
     'u2',
     'm1',
   );
-  expect(redis.publish).toHaveBeenCalledWith(
+  expect(redis.publierApresEcriture).toHaveBeenCalledWith(
     'read-state.updated',
     expect.objectContaining({ lastReadMessageId: 'm1' }),
   );

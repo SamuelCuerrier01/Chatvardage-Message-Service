@@ -37,7 +37,7 @@ describe('MessagesService', () => {
         delete: jest.fn(),
       },
     };
-    redis = { publish: jest.fn() };
+    redis = { publierApresEcriture: jest.fn() };
     limiteEnvoi = { verifier: jest.fn() };
     destinataires = { exigerExistant: jest.fn().mockResolvedValue(undefined) };
     lecture = { compteursDm: jest.fn().mockResolvedValue(new Map()) };
@@ -58,7 +58,7 @@ describe('MessagesService', () => {
     prisma.$queryRaw.mockResolvedValue([delivered]);
     await expect(service.markDelivered('u2', 'm1')).resolves.toEqual(delivered);
     expect(prisma.privateMessage.update).not.toHaveBeenCalled();
-    expect(redis.publish).toHaveBeenCalledWith(
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
       'private-message.delivered',
       delivered,
     );
@@ -79,7 +79,7 @@ describe('MessagesService', () => {
     prisma.privateMessage.findUnique.mockResolvedValue(delivered);
     await expect(service.markDelivered('u2', 'm1')).resolves.toBe(delivered);
     expect(prisma.privateMessage.update).not.toHaveBeenCalled();
-    expect(redis.publish).not.toHaveBeenCalled();
+    expect(redis.publierApresEcriture).not.toHaveBeenCalled();
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
   it('refuse un message inconnu', async () => {
@@ -95,9 +95,6 @@ describe('MessagesService', () => {
     });
     prisma.$queryRaw.mockRejectedValueOnce(new Error('database'));
     await expect(service.markDelivered('u2', 'm1')).rejects.toThrow('database');
-    prisma.$queryRaw.mockResolvedValue([msg]);
-    redis.publish.mockRejectedValueOnce(new Error('redis'));
-    await expect(service.markDelivered('u2', 'm1')).rejects.toThrow('redis');
   });
   it('deux confirmations concurrentes ne publient qu une livraison', async () => {
     const delivered = { ...msg, deliveredAt: new Date() };
@@ -113,7 +110,7 @@ describe('MessagesService', () => {
       service.markDelivered('u2', 'm1'),
     ]);
     expect(resultats).toEqual([delivered, delivered]);
-    expect(redis.publish).toHaveBeenCalledTimes(1);
+    expect(redis.publierApresEcriture).toHaveBeenCalledTimes(1);
   });
   it('refuse un message supprimé pendant la confirmation', async () => {
     prisma.privateMessage.findUnique
@@ -123,15 +120,18 @@ describe('MessagesService', () => {
     await expect(service.markDelivered('u2', 'm1')).rejects.toBeInstanceOf(
       NotFoundException,
     );
-    expect(redis.publish).not.toHaveBeenCalled();
+    expect(redis.publierApresEcriture).not.toHaveBeenCalled();
   });
   it('creates then publishes', async () => {
     prisma.privateMessage.create.mockResolvedValue(msg);
-    redis.publish.mockResolvedValue(1);
+    redis.publierApresEcriture.mockResolvedValue(1);
     await expect(
       service.create('u1', { recipientId: 'u2', content: 'hi' }, 'jwt'),
     ).resolves.toBe(msg);
-    expect(redis.publish).toHaveBeenCalledWith('private-message.created', msg);
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
+      'private-message.created',
+      msg,
+    );
     expect(limiteEnvoi.verifier).toHaveBeenCalledWith('u1');
     expect(destinataires.exigerExistant).toHaveBeenCalledWith('u2', 'jwt');
   });
@@ -162,10 +162,10 @@ describe('MessagesService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.privateMessage.create).not.toHaveBeenCalled();
   });
-  it('audits an admin message persisted before Redis fails', async () => {
+  it('audits an admin message before publishing it', async () => {
     const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
     prisma.privateMessage.create.mockResolvedValue(msg);
-    redis.publish.mockRejectedValue(new Error('redis down'));
+    redis.publierApresEcriture.mockResolvedValue(undefined);
     try {
       await expect(
         service.createForAdmin(
@@ -173,9 +173,12 @@ describe('MessagesService', () => {
           'jwt-admin',
           'admin',
         ),
-      ).rejects.toThrow('redis down');
+      ).resolves.toBe(msg);
       expect(log).toHaveBeenCalledWith(
         'Admin admin a créé le DM m1 au nom de u1',
+      );
+      expect(log.mock.invocationCallOrder[0]).toBeLessThan(
+        redis.publierApresEcriture.mock.invocationCallOrder[0],
       );
     } finally {
       log.mockRestore();
@@ -204,14 +207,14 @@ describe('MessagesService', () => {
       service.create('u1', { recipientId: 'u1', content: 'hi' }, 'jwt'),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.privateMessage.create).not.toHaveBeenCalled();
-    expect(redis.publish).not.toHaveBeenCalled();
+    expect(redis.publierApresEcriture).not.toHaveBeenCalled();
   });
   it('does not publish when create fails', async () => {
     prisma.privateMessage.create.mockRejectedValue(new Error('db'));
     await expect(
       service.create('u1', { recipientId: 'u2', content: 'x' }, 'jwt'),
     ).rejects.toThrow('db');
-    expect(redis.publish).not.toHaveBeenCalled();
+    expect(redis.publierApresEcriture).not.toHaveBeenCalled();
   });
   it('returns history', async () => {
     prisma.privateMessage.findMany.mockResolvedValue([msg]);
@@ -370,11 +373,14 @@ describe('MessagesService', () => {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 50,
     });
-    expect(redis.publish).toHaveBeenCalledWith('private-message.deleted', {
-      id: 'm1',
-      senderId: 'u1',
-      recipientId: 'u2',
-    });
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
+      'private-message.deleted',
+      {
+        id: 'm1',
+        senderId: 'u1',
+        recipientId: 'u2',
+      },
+    );
   });
   it('paginates admin messages filtered by participant', async () => {
     prisma.privateMessage.findFirst.mockResolvedValue({ id: 'm1' });
@@ -426,11 +432,11 @@ describe('MessagesService', () => {
     const updated = { ...msg, content: 'n' };
     prisma.privateMessage.findUnique.mockResolvedValue(msg);
     prisma.privateMessage.update.mockResolvedValue(updated);
-    redis.publish.mockResolvedValue(1);
+    redis.publierApresEcriture.mockResolvedValue(1);
     await expect(service.update('u1', 'm1', { content: 'n' })).resolves.toBe(
       updated,
     );
-    expect(redis.publish).toHaveBeenCalledWith(
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
       'private-message.updated',
       updated,
     );
@@ -450,13 +456,16 @@ describe('MessagesService', () => {
   it('deletes then publishes routed event', async () => {
     prisma.privateMessage.findUnique.mockResolvedValue(msg);
     prisma.privateMessage.delete.mockResolvedValue(msg);
-    redis.publish.mockResolvedValue(1);
+    redis.publierApresEcriture.mockResolvedValue(1);
     await service.remove('u1', 'm1');
-    expect(redis.publish).toHaveBeenCalledWith('private-message.deleted', {
-      id: 'm1',
-      senderId: 'u1',
-      recipientId: 'u2',
-    });
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
+      'private-message.deleted',
+      {
+        id: 'm1',
+        senderId: 'u1',
+        recipientId: 'u2',
+      },
+    );
   });
 
   it('deletes both directions of a deleted user’s conversations', async () => {

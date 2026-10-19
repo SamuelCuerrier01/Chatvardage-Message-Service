@@ -31,7 +31,7 @@ Architecture d'équipe :
 
 - persister les messages privés et de salon dans PostgreSQL (source de vérité) ;
 - persister l'état de lecture de chaque conversation (`ConversationReadState`), calculer les messages non lus et rechercher dans les seules conversations accessibles (salons lisibles fournis par Room-Service, `GET /api/internal/users/:userId/channels`) ;
-- publier chaque changement sur Redis **après** l'écriture en base, puis le diffuser par Socket.IO ;
+- publier chaque changement sur Redis **après** l'écriture en base (`RedisService.publierApresEcriture`, qui journalise un échec sans faire échouer la requête), puis le diffuser par Socket.IO ;
 - relayer la présence, le profil, l'indicateur de saisie et les changements de serveur signalés par Room-Service (`/api/internal`, jeton interne) ;
 - limiter la fréquence des envois (`LimiteEnvoiService`) et des événements Socket.IO bavards.
 
