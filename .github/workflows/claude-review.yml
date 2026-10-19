@@ -90,7 +90,7 @@ jobs:
           && github.event.pull_request.head.repo.full_name == github.repository
           && (needs.copilot-fallback-review.result == 'failure'
               || needs.copilot-fallback-review.outputs.fallback_required == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: codex-review
     concurrency:
       group: codex-plus-auth-${{ github.repository }}
@@ -107,6 +107,14 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
+
+      - name: Prepare read-only sandbox
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap apparmor-profiles apparmor-utils
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          bwrap --ro-bind / / --unshare-user --unshare-pid --unshare-net --proc /proc -- cat AGENTS.md > /dev/null
 
       - name: Install Codex CLI
         run: npm install -g --ignore-scripts @openai/codex@0.159.3
