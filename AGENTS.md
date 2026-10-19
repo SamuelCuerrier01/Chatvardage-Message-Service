@@ -101,6 +101,8 @@ Infra est la référence du démarrage complet, des architectures, contrats et s
 - **Publication de l'état de lecture** seulement si la lecture relue correspond encore à la date avancée par cet appel ; l'état en base reste monotone. Pas de verrou distribué : chaque consommateur garde la position maximale `(lastReadAt, lastReadMessageId)`.
 - **Une date Redis invalide est rejetée par la gateway** avant d'atteindre les clients.
 - **Référence d'une publication perdue** : `referencePublication` ne reconnaît qu'un `id` texte, ou `userId` et `targetId` pour l'état de lecture. Tous les identifiants du schéma sont des UUID texte ; ne pas gérer d'identifiant numérique sans canal qui en publie. Les valeurs sont passées par `JSON.stringify` pour qu'un retour à la ligne ne fragmente pas le journal.
+- **Canal journalisé sans `JSON.stringify`** : les canaux sont des constantes du code, jamais une donnée reçue. Seules les valeurs issues du contenu publié sont échappées.
+- **`mock.invocationCallOrder` dans les tests** : propriété documentée de l'API des fonctions simulées de Jest ; elle reste le moyen direct de vérifier l'audit avant la publication.
 - **`Promise.all` à trois opérations pour deux résultats** : la troisième renvoie `void` et son échec doit se propager.
 - **`OR` des compteurs de non-lus DM** : la clause des conversations jamais lues est nécessaire ; une optimisation SQL demande une mesure de charge.
 - **Fusion de recherche** : charger au plus deux fois `limit + 1` lignes détermine la page globale et son curseur ; la limite maximale borne ce coût.

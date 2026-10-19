@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 
-import { RedisService } from './redis.service';
+import { DELAI_COMMANDE_MS, RedisService } from './redis.service';
 
 const connect = jest.fn(),
   ping = jest.fn(),
@@ -133,7 +133,16 @@ describe('RedisService', () => {
 
     new RedisService();
 
-    expect(Redis).toHaveBeenCalledWith('redis://x', expect.any(Object));
+    expect(Redis).toHaveBeenNthCalledWith(
+      1,
+      'redis://x',
+      expect.objectContaining({ commandTimeout: DELAI_COMMANDE_MS }),
+    );
+    expect(Redis).toHaveBeenNthCalledWith(
+      2,
+      'redis://x',
+      expect.not.objectContaining({ commandTimeout: expect.anything() }),
+    );
   });
 
   it('publierApresEcriture publie le contenu sérialisé', async () => {

@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
 
+export const DELAI_COMMANDE_MS = 2000;
+
 @Injectable()
 export class RedisService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
@@ -14,6 +16,7 @@ export class RedisService implements OnModuleDestroy {
     this.publisher = new Redis(url, {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
+      commandTimeout: DELAI_COMMANDE_MS,
     });
     this.subscriber = new Redis(url, {
       lazyConnect: true,

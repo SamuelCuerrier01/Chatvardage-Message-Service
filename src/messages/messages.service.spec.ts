@@ -7,6 +7,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { RedisService } from '../redis.service';
+
+jest.mock('ioredis', () => ({
+  __esModule: true,
+  default: jest.fn().mockImplementation(() => ({ status: 'wait' })),
+}));
 import { MessagesService } from './messages.service';
 
 describe('MessagesService', () => {
@@ -447,12 +452,11 @@ describe('MessagesService', () => {
     );
   });
   describe('Redis indisponible après l écriture', () => {
-    let redisReel: RedisService;
     let error: jest.SpyInstance;
 
     beforeEach(() => {
       error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
-      redisReel = new RedisService();
+      const redisReel = new RedisService();
       jest
         .spyOn(redisReel, 'publish')
         .mockRejectedValue(new Error('redis down'));
@@ -465,10 +469,7 @@ describe('MessagesService', () => {
       );
     });
 
-    afterEach(() => {
-      redisReel.onModuleDestroy();
-      error.mockRestore();
-    });
+    afterEach(() => error.mockRestore());
 
     it('confirme la création, la modification et la livraison enregistrées', async () => {
       const updated = { ...msg, content: 'n' };
