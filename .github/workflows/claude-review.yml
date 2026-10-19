@@ -44,7 +44,7 @@ jobs:
 
   copilot-fallback-review:
     outputs:
-      fallback_required: ${{ steps.post-review.outcome != 'success' }}
+      fallback_required: ${{ steps.copilot-review.outcome != 'success' || steps.post-review.outcome != 'success' }}
     needs: claude-review
     if: ${{ always() && !cancelled() && (needs.claude-review.result == 'failure' || needs.claude-review.outputs.fallback_required == 'true') }}
     runs-on: ubuntu-latest
@@ -87,7 +87,6 @@ jobs:
     needs: [claude-review, copilot-fallback-review]
     if: >-
       ${{ always() && !cancelled()
-          && github.event.repository.private
           && github.event.pull_request.head.repo.full_name == github.repository
           && (needs.copilot-fallback-review.result == 'failure'
               || needs.copilot-fallback-review.outputs.fallback_required == 'true') }}
