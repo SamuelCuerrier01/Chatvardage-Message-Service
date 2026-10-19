@@ -30,6 +30,7 @@ npm ci
 npm audit --audit-level=high
 npx prisma generate
 npm run lint
+npm run format:check
 npm run test:cov -- --runInBand
 npm run build
 ```

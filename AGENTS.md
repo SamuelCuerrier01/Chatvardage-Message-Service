@@ -67,6 +67,7 @@ Une seule instance : sans adaptateur Redis de Socket.IO, la présence, les limit
 ```bash
 npm audit --audit-level=high
 npm run lint
+npm run format:check
 npm run build
 npm run test:cov
 ```

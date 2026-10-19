@@ -11,6 +11,7 @@
     "test:integration": "jest --config test/jest-integration.json --runInBand",
     "prisma:generate": "prisma generate",
     "lint": "eslint src test --max-warnings=0",
+    "format:check": "prettier --check .",
     "prebuild": "prisma generate",
     "pretest": "prisma generate",
     "pretest:cov": "prisma generate",
