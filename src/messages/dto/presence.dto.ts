@@ -10,7 +10,7 @@ export class PresenceDto {
   @IsIn(['en-ligne', 'hors-ligne']) statut!: 'en-ligne' | 'hors-ligne';
 }
 
-export const MAX_PRESENCES_SUIVIES = 500;
+const MAX_PRESENCES_SUIVIES = 500;
 
 export class SuivrePresenceDto {
   @IsArray()
