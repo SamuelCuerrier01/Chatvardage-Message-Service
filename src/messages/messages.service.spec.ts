@@ -10,7 +10,10 @@ import { RedisService } from '../redis.service';
 
 jest.mock('ioredis', () => ({
   __esModule: true,
-  default: jest.fn().mockImplementation(() => ({ status: 'wait' })),
+  default: jest.fn().mockImplementation(() => ({
+    status: 'ready',
+    publish: jest.fn().mockRejectedValue(new Error('redis down')),
+  })),
 }));
 import { MessagesService } from './messages.service';
 
@@ -456,13 +459,9 @@ describe('MessagesService', () => {
 
     beforeEach(() => {
       error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
-      const redisReel = new RedisService();
-      jest
-        .spyOn(redisReel, 'publish')
-        .mockRejectedValue(new Error('redis down'));
       service = new MessagesService(
         prisma,
-        redisReel,
+        new RedisService(),
         limiteEnvoi,
         destinataires,
         lecture,
@@ -471,13 +470,14 @@ describe('MessagesService', () => {
 
     afterEach(() => error.mockRestore());
 
-    it('confirme la création, la modification et la livraison enregistrées', async () => {
+    it('confirme la création, la modification, la livraison et les suppressions enregistrées', async () => {
       const updated = { ...msg, content: 'n' };
       const delivered = { ...msg, deliveredAt: new Date() };
       prisma.privateMessage.create.mockResolvedValue(msg);
       prisma.privateMessage.findUnique
         .mockResolvedValueOnce(msg)
-        .mockResolvedValueOnce({ ...msg, deliveredAt: null });
+        .mockResolvedValueOnce({ ...msg, deliveredAt: null })
+        .mockResolvedValue(msg);
       prisma.privateMessage.update.mockResolvedValue(updated);
       prisma.$queryRaw.mockResolvedValue([delivered]);
 
@@ -488,10 +488,16 @@ describe('MessagesService', () => {
         updated,
       );
       await expect(service.markDelivered('u2', 'm1')).resolves.toBe(delivered);
+      await expect(service.remove('u1', 'm1')).resolves.toBeUndefined();
+      await expect(
+        service.removeForAdmin('m1', 'admin'),
+      ).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledTimes(5);
       for (const canal of [
         'private-message.created',
         'private-message.updated',
         'private-message.delivered',
+        'private-message.deleted',
       ]) {
         expect(error).toHaveBeenCalledWith(
           expect.stringContaining(`Publication ${canal} perdue`),

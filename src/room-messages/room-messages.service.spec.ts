@@ -3,9 +3,19 @@ import {
   HttpStatus,
   BadRequestException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { RedisService } from '../redis.service';
 import { RoomMessagesService } from './room-messages.service';
+
+jest.mock('ioredis', () => ({
+  __esModule: true,
+  default: jest.fn().mockImplementation(() => ({
+    status: 'ready',
+    publish: jest.fn().mockRejectedValue(new Error('redis down')),
+  })),
+}));
 
 describe('RoomMessagesService', () => {
   const msg = {
@@ -325,6 +335,44 @@ describe('RoomMessagesService', () => {
       'room-message.updated',
       updated,
     );
+  });
+
+  it('confirme les écritures de salon quand Redis est indisponible', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    try {
+      service = new RoomMessagesService(
+        prisma,
+        new RedisService(),
+        rooms,
+        limiteEnvoi,
+        destinataires,
+      );
+      const updated = { ...msg, content: 'n' };
+      prisma.roomMessage.create.mockResolvedValue(msg);
+      prisma.roomMessage.findUnique.mockResolvedValue(msg);
+      prisma.roomMessage.update.mockResolvedValue(updated);
+
+      await expect(
+        service.create(acteur('u1'), 'r1', { content: 'hi' }),
+      ).resolves.toBe(msg);
+      await expect(
+        service.update(acteur('u1'), 'r1', 'm1', { content: 'n' }),
+      ).resolves.toBe(updated);
+      await expect(
+        service.remove(acteur('u1'), 'r1', 'm1'),
+      ).resolves.toBeUndefined();
+      for (const canal of [
+        'room-message.created',
+        'room-message.updated',
+        'room-message.deleted',
+      ]) {
+        expect(error).toHaveBeenCalledWith(
+          expect.stringContaining(`Publication ${canal} perdue`),
+        );
+      }
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it('remove not found', async () => {
