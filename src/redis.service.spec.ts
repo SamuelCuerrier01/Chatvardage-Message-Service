@@ -136,7 +136,10 @@ describe('RedisService', () => {
     expect(Redis).toHaveBeenNthCalledWith(
       1,
       'redis://x',
-      expect.objectContaining({ commandTimeout: DELAI_COMMANDE_MS }),
+      expect.objectContaining({
+        connectTimeout: DELAI_COMMANDE_MS,
+        commandTimeout: DELAI_COMMANDE_MS,
+      }),
     );
     expect(Redis).toHaveBeenNthCalledWith(
       2,
@@ -178,7 +181,7 @@ describe('RedisService', () => {
       ).resolves.toBeUndefined();
 
       expect(error).toHaveBeenCalledWith(
-        `Publication private-message.created perdue après l'écriture en base (id "m1") : redis down`,
+        `Publication private-message.created perdue après l'écriture en base (id "m1") : "redis down"`,
       );
     });
 
@@ -195,7 +198,7 @@ describe('RedisService', () => {
 
       expect(publish).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledWith(
-        `Publication read-state.updated perdue après l'écriture en base (lecture de "u1" sur "u2") : hors ligne`,
+        `Publication read-state.updated perdue après l'écriture en base (lecture de "u1" sur "u2") : "hors ligne"`,
       );
     });
 
@@ -207,7 +210,7 @@ describe('RedisService', () => {
       });
 
       expect(error).toHaveBeenCalledWith(
-        'Publication x perdue après l\'écriture en base (id "m1\\nfaux enregistrement") : redis down',
+        'Publication x perdue après l\'écriture en base (id "m1\\nfaux enregistrement") : "redis down"',
       );
     });
 
@@ -219,7 +222,7 @@ describe('RedisService', () => {
         await new RedisService().publierApresEcriture('x', payload);
 
         expect(error).toHaveBeenCalledWith(
-          "Publication x perdue après l'écriture en base (sans identifiant) : redis down",
+          `Publication x perdue après l'écriture en base (sans identifiant) : "redis down"`,
         );
       },
     );

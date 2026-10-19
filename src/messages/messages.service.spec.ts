@@ -488,7 +488,15 @@ describe('MessagesService', () => {
         updated,
       );
       await expect(service.markDelivered('u2', 'm1')).resolves.toBe(delivered);
-      expect(error).toHaveBeenCalledTimes(3);
+      for (const canal of [
+        'private-message.created',
+        'private-message.updated',
+        'private-message.delivered',
+      ]) {
+        expect(error).toHaveBeenCalledWith(
+          expect.stringContaining(`Publication ${canal} perdue`),
+        );
+      }
     });
   });
   it('remove not found', async () => {

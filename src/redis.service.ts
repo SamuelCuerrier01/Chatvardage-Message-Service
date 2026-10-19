@@ -16,6 +16,7 @@ export class RedisService implements OnModuleDestroy {
     this.publisher = new Redis(url, {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
+      connectTimeout: DELAI_COMMANDE_MS,
       commandTimeout: DELAI_COMMANDE_MS,
     });
     this.subscriber = new Redis(url, {
@@ -52,7 +53,7 @@ export class RedisService implements OnModuleDestroy {
       await this.publish(channel, payload);
     } catch (erreur) {
       this.logger.error(
-        `Publication ${channel} perdue après l'écriture en base (${referencePublication(payload)}) : ${erreur instanceof Error ? erreur.message : String(erreur)}`,
+        `Publication ${channel} perdue après l'écriture en base (${referencePublication(payload)}) : ${JSON.stringify(erreur instanceof Error ? erreur.message : String(erreur))}`,
       );
     }
   }
