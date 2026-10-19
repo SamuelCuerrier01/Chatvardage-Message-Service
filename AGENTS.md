@@ -118,3 +118,5 @@ Infra est la référence du démarrage complet, des architectures, contrats et s
 - **Tests d'intégration** : `test/jest-integration.json` transforme TypeScript avec `ts-jest` ; aucun script de migration n'appelle `ts-node`. Réinstaller ce dernier ou `@nestjs/testing` ne corrigerait aucun appel existant. Les titres des tests portent leur scénario sans rétablir les commentaires de section.
 
 - **Formatage des signatures et imports** : ne pas déduire un échec Prettier de leur disposition visuelle. Les fichiers `src/rooms/rooms-client.service.ts` et `src/messages/dto/presence.dto.ts` passent le contrôle avec Prettier 3.9.7 verrouillé et `.prettierrc`, comme `npm run format:check` en CI ; les réécrire manuellement ne corrigerait aucun échec.
+
+- **Codex dans ce dépôt public** : le relais après échec ou quota Copilot est voulu pour les PR internes, quel que soit le statut public ou privé du dépôt. Rétablir `github.event.repository.private` empêcherait ce relais demandé. La restriction au même dépôt, l’environnement dédié et la sérialisation des rotations restent en place ; les forks ne reçoivent pas ces secrets.
