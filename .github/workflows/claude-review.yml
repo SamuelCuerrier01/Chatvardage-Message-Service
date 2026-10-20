@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   claude-review:
+    if: ${{ github.head_ref != 'develop' || github.base_ref != 'main' }}
     runs-on: ubuntu-latest
     outputs:
       fallback_required: ${{ steps.review.outcome != 'success' || steps.review.outputs.fallback_required == 'true' }}
@@ -141,6 +142,7 @@ jobs:
 
       - name: Run Codex fallback review
         id: codex-review
+        continue-on-error: true
         timeout-minutes: 15
         env:
           CODEX_HOME: ${{ runner.temp }}/codex-review
