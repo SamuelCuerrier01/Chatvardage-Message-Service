@@ -11,25 +11,17 @@ import {
   ValidateIf,
 } from 'class-validator';
 
-/** Raisons d'un changement de serveur, pour l'affichage côté client. */
 export const RAISONS_SERVEUR = [
-  'modifie', // serveur renommé, rendu public/privé, icône
-  'supprime', // serveur supprimé
-  'membres', // arrivée, départ, rôle modifié
-  'expulse', // `cibleId` a été expulsé
-  'invitation', // `cibleId` a été invité
-  'salons', // salon créé, modifié ou supprimé
+  'modifie',
+  'supprime',
+  'membres',
+  'expulse',
+  'invitation',
+  'salons',
 ] as const;
 
 export type RaisonServeur = (typeof RAISONS_SERVEUR)[number];
 
-/**
- * Changement dans un serveur, envoyé par Room-Service : relayé en temps réel
- * à `utilisateurIds` (membres concernés, calculés par Room-Service), ou à
- * tous les clients connectés si `tous` (serveur par défaut, dont tout le
- * monde est membre : la liste de tous les comptes ne passe pas dans une
- * requête).
- */
 export class EvenementServeurDto {
   @ApiProperty({ maxLength: 255 })
   @IsString()

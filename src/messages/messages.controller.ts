@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -19,7 +20,20 @@ import {
 import { PrivateMessage } from '@prisma/client';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthenticatedRequest, JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { MarquerLuDto } from '../lecture/dto/marquer-lu.dto';
+import {
+  EtatLecture,
+  EtatLectureService,
+  Lecteur,
+} from '../lecture/etat-lecture.service';
 import { extraireJetonBearer } from '../partage/client-auth';
+import { RechercheQueryDto } from '../recherche/dto/recherche-query.dto';
+import { ResumeRechercheQueryDto } from '../recherche/dto/resume-recherche-query.dto';
+import {
+  PageRecherche,
+  ResumeRecherche,
+  RechercheService,
+} from '../recherche/recherche.service';
 import { ConversationSummary } from './dto/conversation-summary.dto';
 import { CreateAdminMessageDto } from './dto/create-admin-message.dto';
 import { CreateMessageDto } from './dto/create-message.dto';
@@ -32,7 +46,22 @@ import { MessagesService } from './messages.service';
 @Controller('messages')
 @UseGuards(JwtAuthGuard)
 export class MessagesController {
-  constructor(private readonly messages: MessagesService) {}
+  constructor(
+    private readonly messages: MessagesService,
+    private readonly lecture: EtatLectureService,
+    private readonly recherche: RechercheService,
+  ) {}
+
+  @Put(':id/delivered')
+  @ApiOperation({
+    summary: 'Confirme la reception du DM dans une application du destinataire',
+  })
+  markDelivered(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ): Promise<PrivateMessage> {
+    return this.messages.markDelivered(req.auth.id, id);
+  }
 
   @Post()
   @ApiOperation({
@@ -47,7 +76,6 @@ export class MessagesController {
     return this.messages.create(
       req.auth.id,
       dto,
-      // Déjà validé par JwtAuthGuard.
       extraireJetonBearer(req.headers.authorization),
     );
   }
@@ -119,8 +147,83 @@ export class MessagesController {
     return this.messages.listConversations(req.auth.id);
   }
 
-  // En dernier : Express essaie les routes dans l'ordre de déclaration,
-  // ':id' capturerait sinon `admin` et `conversations`.
+  @Put('conversations/:otherUserId/read')
+  @ApiOperation({
+    summary: 'Marque une conversation privée comme lue',
+    description:
+      "Jusqu'à `messageId`, ou jusqu'au dernier message. L'état ne recule jamais.",
+  })
+  markDmRead(
+    @Req() req: AuthenticatedRequest,
+    @Param('otherUserId') otherUserId: string,
+    @Body() dto: MarquerLuDto,
+  ): Promise<EtatLecture> {
+    return this.lecture.marquerDmLu(req.auth.id, otherUserId, dto.messageId);
+  }
+
+  @Get('conversations/:otherUserId/read-state')
+  @ApiOperation({
+    summary: "Accusé de lecture d'une conversation privée",
+    description:
+      "Jusqu'où l'interlocuteur a lu la conversation (`lastReadAt`, `null` s'il ne l'a jamais lue).",
+  })
+  dmReadState(
+    @Req() req: AuthenticatedRequest,
+    @Param('otherUserId') otherUserId: string,
+  ): Promise<Lecteur> {
+    return this.lecture.lecteurDm(req.auth.id, otherUserId);
+  }
+
+  @Get('unread')
+  @ApiOperation({
+    summary: 'Mes messages non lus',
+    description:
+      '`{ counts: { "dm:<id>": n, "room:<id>": n } }`, DM et salons lisibles ; seules les conversations avec des non-lus sont présentes.',
+  })
+  async unread(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ counts: Record<string, number> }> {
+    return { counts: await this.lecture.compteurs(req.auth) };
+  }
+
+  @Get('activity')
+  @ApiOperation({
+    summary: 'Dernière activité de mes salons',
+    description:
+      '`{ rooms: { "room:<id>": "<date du dernier message>" } }`, salons lisibles seulement ; les salons sans message sont absents. Sert à trier les serveurs par activité.',
+  })
+  async activity(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ rooms: Record<string, string> }> {
+    return { rooms: await this.lecture.activiteSalons(req.auth) };
+  }
+
+  @Get('search/summary')
+  @ApiOperation({
+    summary: 'Compter les correspondances par interlocuteur, serveur et salon',
+    description:
+      'Totaux complets des DM et salons lisibles, sans contenu de message. Les groupes sans correspondance sont absents.',
+  })
+  searchSummary(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: ResumeRechercheQueryDto,
+  ): Promise<ResumeRecherche> {
+    return this.recherche.resumer(req.auth, query.q);
+  }
+
+  @Get('search')
+  @ApiOperation({
+    summary: 'Recherche dans mes conversations',
+    description:
+      'DM et salons lisibles seulement, du plus récent au plus ancien, paginé par `cursor`.',
+  })
+  search(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: RechercheQueryDto,
+  ): Promise<PageRecherche> {
+    return this.recherche.rechercher(req.auth, query);
+  }
+
   @Get(':id')
   @ApiOperation({
     summary: "Lit un DM dont je suis l'expéditeur ou le destinataire",

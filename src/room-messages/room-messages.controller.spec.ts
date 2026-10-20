@@ -5,6 +5,7 @@ import { RoomMessagesController } from './room-messages.controller';
 describe('RoomMessagesController', () => {
   let service: any;
   let controller: RoomMessagesController;
+  let lecture: any;
   const req: any = { auth: { id: 'u1', role: 'utilisateur' } };
   const adminReq: any = {
     auth: { id: 'admin', role: 'admin' },
@@ -20,7 +21,11 @@ describe('RoomMessagesController', () => {
       update: jest.fn(),
       remove: jest.fn(),
     };
-    controller = new RoomMessagesController(service);
+    lecture = {
+      marquerSalonLu: jest.fn().mockResolvedValue('etat'),
+      lecteursSalon: jest.fn().mockResolvedValue(['l']),
+    };
+    controller = new RoomMessagesController(service, lecture);
   });
 
   it('delegates an admin room message with the selected author', async () => {
@@ -75,5 +80,18 @@ describe('RoomMessagesController', () => {
       content: 'y',
     });
     expect(service.remove).toHaveBeenCalledWith(req.auth, 'r1', 'm');
+  });
+
+  it('délègue le marquage comme lu avec l’identité authentifiée', async () => {
+    await expect(controller.markRead(req, 'r1', {})).resolves.toBe('etat');
+    expect(lecture.marquerSalonLu).toHaveBeenCalledWith(
+      req.auth,
+      'r1',
+      undefined,
+    );
+    await expect(controller.readStates(req, 'r1')).resolves.toEqual({
+      lecteurs: ['l'],
+    });
+    expect(lecture.lecteursSalon).toHaveBeenCalledWith(req.auth, 'r1');
   });
 });

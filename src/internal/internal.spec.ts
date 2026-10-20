@@ -108,6 +108,17 @@ describe('routes internes', () => {
     });
   });
 
+  it('sessions révoquées : publiées pour que chaque instance ferme les sockets', async () => {
+    const redis = { publish: jest.fn().mockResolvedValue(1) };
+    const controller = new InternalEventsController(redis as any);
+    await expect(
+      controller.sessionsRevoquees('11111111-1111-4111-8111-111111111111'),
+    ).resolves.toEqual({ accepte: true });
+    expect(redis.publish).toHaveBeenCalledWith('sessions.revoquees', {
+      userId: '11111111-1111-4111-8111-111111111111',
+    });
+  });
+
   it("valide le corps de l'événement", async () => {
     const erreurs = async (corps: object) =>
       (await validate(plainToInstance(EvenementServeurDto, corps))).map(
@@ -119,7 +130,6 @@ describe('routes internes', () => {
     expect(
       await erreurs({ serveurId: '', raison: 'piratage', utilisateurIds: [1] }),
     ).toEqual(['serveurId', 'raison', 'utilisateurIds']);
-    // `tous` : la liste devient facultative.
     expect(
       await erreurs({ serveurId: 's', raison: 'salons', tous: true }),
     ).toEqual([]);

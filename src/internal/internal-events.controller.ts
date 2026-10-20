@@ -1,4 +1,12 @@
-import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RedisService } from '../redis.service';
 import { EvenementServeurDto } from './evenement-serveur.dto';
@@ -8,13 +16,8 @@ import {
 } from './internal-token.guard';
 
 export const SERVEUR_CHANNEL = 'serveur.change';
+export const SESSIONS_CHANNEL = 'sessions.revoquees';
 
-/**
- * Point d'entrée des événements temps réel produits par d'autres services
- * (Room-Service n'a ni Redis ni Socket.IO). Publie sur Redis ; la passerelle
- * Socket.IO de chaque instance relaie aux destinataires (voir
- * MessagesGateway, `serveur.change`).
- */
 @ApiTags('Interne')
 @ApiHeader({ name: EN_TETE_JETON_INTERNE, required: true })
 @Controller('internal')
@@ -35,6 +38,19 @@ export class InternalEventsController {
       tous: dto.tous === true,
       utilisateurIds: dto.tous ? [] : [...new Set(dto.utilisateurIds)],
     });
+    return { accepte: true };
+  }
+
+  @Post('users/:userId/sessions-revoquees')
+  @ApiOperation({
+    summary:
+      "Sessions d'un compte invalidées (appelée par Authentification) : ses sockets au jeton révoqué sont fermés aussitôt",
+  })
+  @HttpCode(202)
+  async sessionsRevoquees(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+  ): Promise<{ accepte: true }> {
+    await this.redis.publish(SESSIONS_CHANNEL, { userId });
     return { accepte: true };
   }
 }

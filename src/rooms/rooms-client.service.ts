@@ -6,13 +6,8 @@ import {
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '../auth/jwt-auth.service';
 
-// Borne la mémoire du cache : au-delà, l'entrée AJOUTÉE la première est
-// oubliée (FIFO, pas LRU : une lecture ne la rajeunit pas). Suffisant avec
-// une durée de vie courte : une entrée expire bien avant d'être évincée,
-// sauf avec plus de 10 000 entrées vivantes à la fois.
 export const TAILLE_MAX_CACHE_ACCES = 10_000;
 
-/** Durée de mémorisation d'un accès (ms), 10 s par défaut, 0 = sans cache. */
 export function dureeCacheAccesMs(
   env: NodeJS.ProcessEnv = process.env,
 ): number {
@@ -26,24 +21,12 @@ export function dureeCacheAccesMs(
 }
 
 export type ConfigRoomsClient = {
-  /** Origine de Room-Service, sans chemin. */
   urlService: string;
-  /** INTERNAL_SERVICE_TOKEN ; absent, chaque appel échoue en 503. */
   jetonInterne: string | null;
   delaiMs: number;
   dureeCacheMs: number;
 };
 
-/**
- * Lit et valide la configuration au démarrage (erreur immédiate plutôt
- * qu'un 503 générique au premier message de salon), comme
- * lireConfigClientAuth pour Authentification :
- * - `ROOM_SERVICE_URL` : origine HTTP(S) seule, sans chemin ni paramètres.
- *   HTTPS n'est pas exigé en production : l'appel reste sur le réseau interne
- *   des services, jamais relayé par Serveur-API ;
- * - `ROOM_SERVICE_TIMEOUT_MS` : entier ≥ 1, 3000 ms par défaut ;
- * - `ROOM_ACCESS_CACHE_TTL_MS` : voir dureeCacheAccesMs.
- */
 export function lireConfigRoomsClient(
   env: NodeJS.ProcessEnv = process.env,
 ): ConfigRoomsClient {
@@ -80,42 +63,36 @@ export function lireConfigRoomsClient(
   };
 }
 
-/** Accès d'un utilisateur à un salon, calculé par Room-Service. */
 export type AccesSalon = {
   salonId: string;
   serveurId: string;
   estMembre: boolean;
   peutLire: boolean;
   peutEcrire: boolean;
-  /** Modérateur du serveur (ou propriétaire, admin) : peut supprimer les
-   * messages des autres. Absent d'un Room-Service plus ancien : faux. */
   peutModerer: boolean;
+};
+
+export type SalonLisible = {
+  salonId: string;
+  serveurId: string;
+  depuis: Date | null;
 };
 
 export type Acteur = Pick<AuthenticatedUser, 'id' | 'role'>;
 
-/**
- * Client de la route interne de Room-Service
- * (`GET /api/internal/channels/:id/access/:userId`), protégée par le secret
- * partagé INTERNAL_SERVICE_TOKEN. Room-Service est la seule source de vérité
- * des permissions (salons réservés aux modérateurs, écriture réservée de
- * #annonces…) : ce service ne recode aucune règle.
- *
- * Cache : chaque envoi ou lecture de message de salon demande l'accès ; un
- * accès obtenu est donc mémorisé `ROOM_ACCESS_CACHE_TTL_MS` (10 s par
- * défaut). Room-Service prévient de chaque changement d'un serveur (voir
- * MessagesGateway.broadcastServeurEvent), qui oublie alors tous les accès à
- * ce serveur (`oublierServeur`) : une expulsion ou un salon rendu réservé
- * est pris en compte aussitôt. Les erreurs ne sont jamais mémorisées.
- */
 @Injectable()
 export class RoomsClientService {
-  // Configuration lue et validée au démarrage du service.
   private readonly config = lireConfigRoomsClient();
   private readonly cache = new Map<
     string,
     { acces: AccesSalon; expireA: number }
   >();
+  private readonly cacheListes = new Map<
+    string,
+    { salons: SalonLisible[]; expireA: number }
+  >();
+
+  private generationInvalidation = 0;
 
   async verifierAcces(roomId: string, acteur: Acteur): Promise<AccesSalon> {
     const clef = `${roomId}|${acteur.id}|${acteur.role}`;
@@ -124,69 +101,78 @@ export class RoomsClientService {
       if (entree.expireA > Date.now()) return entree.acces;
       this.cache.delete(clef);
     }
-    const acces = await this.demanderAcces(roomId, acteur);
-    if (this.config.dureeCacheMs > 0) {
-      if (this.cache.size >= TAILLE_MAX_CACHE_ACCES) {
-        this.cache.delete(this.cache.keys().next().value as string);
-      }
-      this.cache.set(clef, {
-        acces,
-        expireA: Date.now() + this.config.dureeCacheMs,
-      });
+    for (let tentative = 0; tentative < 2; tentative += 1) {
+      const generation = this.generationInvalidation;
+      const acces = await this.demanderAcces(roomId, acteur);
+      if (generation !== this.generationInvalidation) continue;
+      this.memoriser(this.cache, clef, { acces });
+      return acces;
     }
-    return acces;
+    throw new ServiceUnavailableException(
+      'Droits des salons modifiés pendant la validation',
+    );
   }
 
-  /** Oublie les accès mémorisés aux salons d'un serveur qui a changé. */
+  async salonsLisibles(acteur: Acteur): Promise<SalonLisible[]> {
+    const clef = `${acteur.id}|${acteur.role}`;
+    const entree = this.cacheListes.get(clef);
+    if (entree) {
+      if (entree.expireA > Date.now()) return entree.salons;
+      this.cacheListes.delete(clef);
+    }
+    for (let tentative = 0; tentative < 2; tentative += 1) {
+      const generation = this.generationInvalidation;
+      const corps = await this.lireJson(
+        `/api/internal/users/${encodeURIComponent(acteur.id)}` +
+          `/channels?role=${encodeURIComponent(acteur.role)}`,
+        null,
+      );
+      if (generation !== this.generationInvalidation) continue;
+      const salons = lireSalonsLisibles(corps);
+      this.memoriser(this.cacheListes, clef, { salons });
+      return salons;
+    }
+    throw new ServiceUnavailableException(
+      'Droits des salons modifiés pendant la validation',
+    );
+  }
+
   oublierServeur(serveurId: string): void {
+    this.generationInvalidation += 1;
     for (const [clef, { acces }] of this.cache) {
       if (acces.serveurId === serveurId) this.cache.delete(clef);
     }
+    this.cacheListes.clear();
+  }
+
+  private memoriser<T>(
+    cache: Map<string, T & { expireA: number }>,
+    clef: string,
+    valeur: T,
+  ): void {
+    if (this.config.dureeCacheMs <= 0) return;
+    if (cache.size >= TAILLE_MAX_CACHE_ACCES) {
+      cache.delete(cache.keys().next().value as string);
+    }
+    cache.set(clef, {
+      ...valeur,
+      expireA: Date.now() + this.config.dureeCacheMs,
+    });
   }
 
   private async demanderAcces(
     roomId: string,
     acteur: Acteur,
   ): Promise<AccesSalon> {
-    const jeton = this.config.jetonInterne;
-    if (!jeton) {
-      throw new ServiceUnavailableException(
-        'INTERNAL_SERVICE_TOKEN non configuré',
-      );
-    }
-
-    let response: Response;
-
-    try {
-      response = await fetch(
-        `${this.config.urlService}/api/internal/channels/${encodeURIComponent(roomId)}` +
-          `/access/${encodeURIComponent(acteur.id)}?role=${encodeURIComponent(acteur.role)}`,
-        {
-          headers: { 'x-internal-token': jeton },
-          signal: AbortSignal.timeout(this.config.delaiMs),
-        },
-      );
-    } catch {
-      throw new ServiceUnavailableException('Service des salons indisponible');
-    }
-
-    if (response.status === 404) {
-      throw new NotFoundException('Salon introuvable');
-    }
-
-    if (!response.ok) {
-      throw new ServiceUnavailableException('Validation du salon impossible');
-    }
-
-    let acces: Partial<AccesSalon>;
-
-    try {
-      acces = (await response.json()) as Partial<AccesSalon>;
-    } catch {
-      throw new BadGatewayException('Réponse invalide du service des salons');
-    }
+    const acces = (await this.lireJson(
+      `/api/internal/channels/${encodeURIComponent(roomId)}` +
+        `/access/${encodeURIComponent(acteur.id)}?role=${encodeURIComponent(acteur.role)}`,
+      'Salon introuvable',
+    )) as Partial<AccesSalon> | null;
 
     if (
+      typeof acces !== 'object' ||
+      acces === null ||
       typeof acces.salonId !== 'string' ||
       typeof acces.serveurId !== 'string' ||
       typeof acces.estMembre !== 'boolean' ||
@@ -207,4 +193,61 @@ export class RoomsClientService {
       peutModerer: acces.peutModerer ?? false,
     };
   }
+
+  private async lireJson(
+    chemin: string,
+    introuvable: string | null,
+  ): Promise<unknown> {
+    const jeton = this.config.jetonInterne;
+    if (!jeton) {
+      throw new ServiceUnavailableException(
+        'INTERNAL_SERVICE_TOKEN non configuré',
+      );
+    }
+
+    let response: Response;
+
+    try {
+      response = await fetch(`${this.config.urlService}${chemin}`, {
+        headers: { 'x-internal-token': jeton },
+        signal: AbortSignal.timeout(this.config.delaiMs),
+      });
+    } catch {
+      throw new ServiceUnavailableException('Service des salons indisponible');
+    }
+
+    if (response.status === 404 && introuvable !== null) {
+      throw new NotFoundException(introuvable);
+    }
+
+    if (!response.ok) {
+      throw new ServiceUnavailableException('Validation du salon impossible');
+    }
+
+    try {
+      return await response.json();
+    } catch {
+      throw new BadGatewayException('Réponse invalide du service des salons');
+    }
+  }
+}
+
+function lireSalonsLisibles(corps: unknown): SalonLisible[] {
+  const invalide = () =>
+    new BadGatewayException('Réponse invalide du service des salons');
+  const salons = (corps as { salons?: unknown } | null)?.salons;
+  if (!Array.isArray(salons)) throw invalide();
+  return salons.map((brut: unknown) => {
+    const salon = brut as Partial<Record<keyof SalonLisible, unknown>> | null;
+    if (
+      typeof salon?.salonId !== 'string' ||
+      typeof salon.serveurId !== 'string' ||
+      (salon.depuis !== null && typeof salon.depuis !== 'string')
+    ) {
+      throw invalide();
+    }
+    const depuis = salon.depuis === null ? null : new Date(salon.depuis);
+    if (depuis !== null && Number.isNaN(depuis.getTime())) throw invalide();
+    return { salonId: salon.salonId, serveurId: salon.serveurId, depuis };
+  });
 }

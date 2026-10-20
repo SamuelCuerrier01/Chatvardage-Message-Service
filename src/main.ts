@@ -5,13 +5,11 @@ import { AppModule } from './app.module';
 import { verifierSecretsProduction } from './partage/secrets-production';
 
 async function bootstrap(): Promise<void> {
-  // Avant tout : pas de démarrage en production avec des secrets de dev.
   verifierSecretsProduction({
     jetonInterne: true,
     urlsAvecMotDePasse: ['DATABASE_URL', 'REDIS_URL'],
   });
   const app = await NestFactory.create(AppModule);
-  // SIGTERM (docker stop) : fermeture propre (Prisma, Redis, minuteurs).
   app.enableShutdownHooks();
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
@@ -27,7 +25,7 @@ async function bootstrap(): Promise<void> {
       'API des messages privés et de salon de Chatvardage. Les événements ' +
         'Socket.IO (namespace /messages) sont décrits dans la documentation Infra.',
     )
-    .setVersion('1.0.0')
+    .setVersion('1.1.0')
     .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);

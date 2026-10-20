@@ -1,6 +1,6 @@
 # AGENTS.md — Chatvardage Message-Service
 
-Ce fichier contient les règles de travail pour tout agent IA ou développeur qui modifie ce dépôt. Le détail du fonctionnement est dans le `README.md` et `docs/`.
+Règles de travail pour toute personne ou tout agent qui modifie ce dépôt. Le fonctionnement est décrit dans le `README.md` et dans le guide du service d'Infra.
 
 ## Contexte du projet
 
@@ -8,7 +8,8 @@ Ce dépôt est le **Message-Service** de Chatvardage.
 
 Architecture d'équipe :
 
-- `Frontend` : Electron.
+- `Frontend` : client Electron.
+- `Mobile` : application Expo (React Native).
 - `Serveur-API` : API Gateway / point d'entrée unique (relaie aussi Socket.IO).
 - `Authentification` : utilisateurs, authentification et rôles globaux.
 - `Room-Service` : serveurs, membres, rôles et salons — seule source de vérité des droits d'accès aux salons.
@@ -29,7 +30,8 @@ Architecture d'équipe :
 ## Responsabilités
 
 - persister les messages privés et de salon dans PostgreSQL (source de vérité) ;
-- publier chaque changement sur Redis **après** l'écriture en base, puis le diffuser par Socket.IO ;
+- persister l'état de lecture de chaque conversation (`ConversationReadState`), calculer les messages non lus et rechercher dans les seules conversations accessibles (salons lisibles fournis par Room-Service, `GET /api/internal/users/:userId/channels`) ;
+- publier chaque changement sur Redis **après** l'écriture en base (`RedisService.publierApresEcriture`, qui journalise un échec sans faire échouer la requête), puis le diffuser par Socket.IO ;
 - relayer la présence, le profil, l'indicateur de saisie et les changements de serveur signalés par Room-Service (`/api/internal`, jeton interne) ;
 - limiter la fréquence des envois (`LimiteEnvoiService`) et des événements Socket.IO bavards.
 
@@ -46,6 +48,10 @@ Ne pas recoder ici une règle de droits sur les salons : toujours demander l'acc
 
 `client-auth.ts` et `secrets-production.ts` (et leurs specs) sont **identiques à l'octet près** dans d'autres dépôts. Ne pas les modifier dans un seul dépôt : reporter le même changement partout, puis lancer `A26_5A6_01-Infra/scripts/verifier-fichiers-partages.sh`.
 
+## Code
+
+Pas de commentaires dans le code : les explications vont dans le README, le guide du service d'Infra ou ce fichier. Seules restent les directives d'outils (`eslint-disable-next-line`).
+
 ## Swagger
 
 Toutes les routes REST sont sous `/api`; Swagger est exposé sous `/docs`. Une nouvelle route ou un nouveau DTO REST reçoit ses décorateurs `@ApiOperation` / `@ApiProperty`, comme dans Room-Service. Les événements Socket.IO ne sont pas dans Swagger : les documenter dans Infra (`docs/api/temps-reel-*.md`).
@@ -61,11 +67,14 @@ Une seule instance : sans adaptateur Redis de Socket.IO, la présence, les limit
 ```bash
 npm audit --audit-level=high
 npm run lint
+npm run format:check
 npm run build
 npm run test:cov
 ```
 
 **Audit des dépendances** : le CI lance `npm audit --audit-level=high` (dépendances de dev comprises). Si un avis `high` ou `critical` sans correctif compatible le bloque, forcer une version corrigée par un `overrides` ciblé dans `package.json` si elle existe ; sinon consigner l'exception dans la section « Limites connues (acceptées) » ci-dessus (paquet, avis, raison, condition de retrait). Ne pas retirer ni affaiblir l'étape.
+
+Après un changement des requêtes de non-lus, d'état de lecture ou de recherche, lancer aussi `npm run test:integration` contre une base jetable (voir le README) : les tests unitaires simulent Prisma et ne prouvent pas le SQL réel (par exemple, Prisma n'échappe pas `%` et `_` dans `contains`).
 
 La couverture est exigée à **100 %** (voir `coverageThreshold` dans `package.json`) : toute nouvelle branche atteignable doit être testée. Les tests unitaires simulent Prisma, Redis et les autres services.
 
@@ -75,8 +84,48 @@ Le conteneur tourne sous l'utilisateur `node` et exécute `prisma migrate deploy
 
 ## Documentation
 
-Mettre à jour le `README.md` et `docs/TEMPS_REEL_*.md` à chaque changement de route, d'événement Socket.IO ou de variable d'environnement, ainsi que `docs/API.md` de Serveur-API si le contrat vu par le Frontend change.
+Mettre à jour le `README.md` et, dans Infra, `docs/services/Message-Service.md` et `docs/api/temps-reel-*.md` à chaque changement de route, d'événement Socket.IO ou de variable d'environnement, ainsi que `docs/API.md` de Serveur-API si le contrat vu par les clients change.
 
 ## Documentation centrale
 
 Infra est la référence du démarrage complet, des architectures, contrats et scénarios de validation. Le README local décrit le dépôt et ses commandes; les guides détaillés sont dans `A26_5A6_01-Infra/docs/`. Toute modification de contrat doit mettre à jour la référence centrale et ses liens.
+
+## Choix délibérés (ne pas « corriger »)
+
+- **Confirmation de livraison atomique** : une seule requête confirme et publie `private-message.delivered` ; l'`UPDATE` conditionnel ne change pas `updatedAt`, même si le texte est modifié entre l'autorisation et la confirmation.
+- **Revalidation pendant une panne d'Auth** : les sockets sont conservés, comme pour la revalidation périodique ; un avertissement agrégé les signale.
+- **Pas de validation UUID des identifiants** : les colonnes sont en `TEXT` (pas de `@db.Uuid`) et une cible absente est déjà refusée par le contrat.
+- **CLI Prisma appelé par `build/index.js`** : c'est le `bin` déclaré de la version figée ; npm/npx sont absents de l'image.
+- **`overrides` de `js-yaml` limité à `@nestjs/swagger`** (voir Swagger plus haut).
+- **La promesse de validation Auth en cours est supprimée à l'invalidation** : reprendre une validation commencée avant une révocation serait une faille. Fichier partagé avec Room-Service.
+- **Publication de l'état de lecture** seulement si la lecture relue correspond encore à la date avancée par cet appel ; l'état en base reste monotone. Pas de verrou distribué : chaque consommateur garde la position maximale `(lastReadAt, lastReadMessageId)`.
+- **Une date Redis invalide est rejetée par la gateway** avant d'atteindre les clients.
+- **Référence d'une publication perdue** : `referencePublication` ne reconnaît qu'un `id` texte, ou `userId` et `targetId` pour l'état de lecture. Tous les identifiants du schéma sont des UUID texte ; ne pas gérer d'identifiant numérique sans canal qui en publie. Les valeurs sont passées par `JSON.stringify` pour qu'un retour à la ligne ne fragmente pas le journal.
+- **`referencePublication` non protégée dans le `catch`** : les contenus publiés sont des résultats Prisma ou des objets littéraux du service, sans accesseur qui lève. Un tel accesseur ferait d'ailleurs échouer `JSON.stringify` dans `publish` avant même le `catch`. Pas de second `try/catch` pour un cas qui n'existe pas.
+- **Canal journalisé sans `JSON.stringify`** : les canaux sont des constantes du code, jamais une donnée reçue. Seules les valeurs issues du contenu publié sont échappées.
+- **`mock.invocationCallOrder` dans les tests** : propriété documentée de l'API des fonctions simulées de Jest ; elle reste le moyen direct de vérifier l'audit avant la publication.
+- **`RedisService.publish` reste publique** : la gateway et les routes internes l'appellent directement, car leur appelant doit voir l'échec (Auth et Room-Service retentent ou journalisent). Seules les publications qui suivent une écriture en base passent par `publierApresEcriture`.
+- **Délai de publication** : ioredis arme `commandTimeout` une seule fois par commande, nouvelles tentatives comprises (`Command.setTimeout` ne fait rien si le minuteur existe déjà, et les files hors ligne et de reprise renvoient le même objet `Command`, voir `built/Redis.js` et `built/Command.js` en 5.11). Le pire cas est 2 s de connexion puis 2 s de commande, pas 2 s par tentative.
+- **Une seule constante `DELAI_COMMANDE_MS` pour `connectTimeout` et `commandTimeout`** : le client de publication vise un Redis du même réseau Docker ; les deux délais bornent ensemble la latence d'une écriture (4 s au pire). Ne pas en faire deux variables d'environnement sans besoin de réglage observé.
+- **`Promise.all` à trois opérations pour deux résultats** : la troisième renvoie `void` et son échec doit se propager.
+- **`OR` des compteurs de non-lus DM** : la clause des conversations jamais lues est nécessaire ; une optimisation SQL demande une mesure de charge.
+- **Fusion de recherche** : charger au plus deux fois `limit + 1` lignes détermine la page globale et son curseur ; la limite maximale borne ce coût.
+- **Curseur de recherche non signé** : il ne donne aucun droit, la portée est recalculée depuis l'identité authentifiée.
+- **Invalidation de toutes les listes de salons lisibles après un changement de serveur** : elle privilégie les droits actuels.
+- **Recherche sans limite de fréquence spécifique** : limite connue. Avant une forte charge, mesurer et ajouter une limite ou un index trigramme dans ce service.
+- **Chaîne de migrations** : `20260916163000_init` crée `PrivateMessage`, `20260923130000_add_room_message` crée `RoomMessage`, puis `20261006175849_etat_lecture` et `20261006194000_position_lecture` ajoutent l'état de lecture. Une base neuve n'exige aucune migration corrective.
+
+- **`MAX_PRESENCES_SUIVIES` reste privée au DTO** : seuls sa définition et `@ArrayMaxSize` l'utilisent ; compilation et tests passent. Réexporter cette limite sans appelant élargirait inutilement l'API du module.
+- **En-têtes des fichiers partagés** : la règle est dans ce fichier et `verifier-fichiers-partages.sh` contrôle l'identité réelle. Une annotation inventée `@shared-file`, sans outil qui la lit, n'ajouterait aucun contrôle.
+- **Anciens renvois `docs/TEMPS_REEL_*.md`** : aucune référence ne subsiste dans les dépôts locaux de l'équipe ; les liens actifs pointent vers Infra. Ne pas rétablir des pages de redirection pour des favoris externes hypothétiques.
+- **Revues GitHub** : configuration, secrets et rotation sont décrits dans le [guide Infra](https://github.com/Chatvardage/A26_5A6_01-Infra/blob/c5fc686f262127f7985684d8df3739b549255eea/docs/revues-github.md). Les recopier dans les commentaires du workflow créerait une seconde procédure à maintenir.
+
+- **Ordre des routes Express** : les routes fixes (`unread`, `activity`, `search`, etc.) précèdent `:id` ; `:roomId/history` précède `:roomId/:id`. Conserver cet ordre pour éviter que les paramètres capturent un chemin réservé.
+- **Aucune clé étrangère vers les salons ou utilisateurs** : ils appartiennent aux bases de Room-Service et Authentification. Les droits sont vérifiés par HTTP ; une FK locale ne peut pas garantir une relation entre ces bases.
+- **Tests d'intégration** : `test/jest-integration.json` transforme TypeScript avec `ts-jest` ; aucun script de migration n'appelle `ts-node`. Réinstaller ce dernier ou `@nestjs/testing` ne corrigerait aucun appel existant. Les titres des tests portent leur scénario sans rétablir les commentaires de section.
+
+- **Formatage des signatures et imports** : ne pas déduire un échec Prettier de leur disposition visuelle. Les fichiers `src/rooms/rooms-client.service.ts` et `src/messages/dto/presence.dto.ts` passent le contrôle avec Prettier 3.9.7 verrouillé et `.prettierrc`, comme `npm run format:check` en CI ; les réécrire manuellement ne corrigerait aucun échec.
+
+- **Codex dans ce dépôt public** : le relais après échec ou quota Copilot est voulu pour les PR internes, quel que soit le statut public ou privé du dépôt. Rétablir `github.event.repository.private` empêcherait ce relais demandé. La restriction au même dépôt, l’environnement dédié et la sérialisation des rotations restent en place ; les forks ne reçoivent pas ces secrets.
+
+- **Profil AppArmor du sandbox** : la même étape a réussi sur Ubuntu 24.04 dans [le job Gateway 117932065477](https://github.com/Chatvardage/A26_5A6_01-Serveur-API/actions/runs/39213488827/job/117932065477), avec revue Codex et publication réussies. Une interprétation hypothétique du nom du profil ne justifie pas de désactiver cette protection sans erreur réelle.

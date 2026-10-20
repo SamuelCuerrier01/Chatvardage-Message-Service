@@ -1,6 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class HistoryQueryDto {
   @ApiPropertyOptional({
@@ -9,6 +17,19 @@ export class HistoryQueryDto {
   @IsOptional()
   @IsString()
   cursor?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Message de depart inclus, sans charger les pages intermediaires.',
+  })
+  @IsOptional()
+  @IsString()
+  around?: string;
+
+  @ApiPropertyOptional({ enum: ['before', 'after'], default: 'before' })
+  @IsOptional()
+  @IsIn(['before', 'after'])
+  direction?: 'before' | 'after';
 
   @ApiPropertyOptional({ minimum: 1, maximum: 100, default: 50 })
   @IsOptional()

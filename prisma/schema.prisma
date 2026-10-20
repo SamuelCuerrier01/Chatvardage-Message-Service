@@ -14,15 +14,12 @@ model PrivateMessage {
   content     String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  deliveredAt DateTime?
 
   @@index([senderId, recipientId, createdAt])
   @@index([recipientId, senderId, createdAt])
 }
 
-// Aucune FK vers Room : Room-Service possède les salons/membres dans sa
-// propre base de données. Message-Service vérifie l'appartenance au salon
-// via un appel HTTP à Room-Service (voir RoomsClientService) avant chaque
-// écriture ou lecture.
 model RoomMessage {
   id        String   @id @default(uuid())
   roomId    String
@@ -32,4 +29,21 @@ model RoomMessage {
   updatedAt DateTime @updatedAt
 
   @@index([roomId, createdAt])
+}
+
+enum ConversationKind {
+  dm
+  room
+}
+
+model ConversationReadState {
+  userId            String
+  kind              ConversationKind
+  targetId          String
+  lastReadAt        DateTime
+  lastReadMessageId String?
+  updatedAt         DateTime         @updatedAt
+
+  @@id([userId, kind, targetId])
+  @@index([kind, targetId])
 }

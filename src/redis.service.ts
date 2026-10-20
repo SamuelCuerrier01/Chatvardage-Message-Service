@@ -1,8 +1,11 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
+
+export const DELAI_COMMANDE_MS = 2000;
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
+  private readonly logger = new Logger(RedisService.name);
   readonly publisher: Redis;
   readonly subscriber: Redis;
   private readonly connectionPromises = new WeakMap<Redis, Promise<void>>();
@@ -13,6 +16,8 @@ export class RedisService implements OnModuleDestroy {
     this.publisher = new Redis(url, {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
+      connectTimeout: DELAI_COMMANDE_MS,
+      commandTimeout: DELAI_COMMANDE_MS,
     });
     this.subscriber = new Redis(url, {
       lazyConnect: true,
@@ -38,9 +43,19 @@ export class RedisService implements OnModuleDestroy {
     return this.publisher.ping();
   }
 
-  async publish(channel: string, payload: unknown): Promise<number> {
+  async publish(channel: string, payload: object): Promise<number> {
     await this.ensureConnected(this.publisher);
     return this.publisher.publish(channel, JSON.stringify(payload));
+  }
+
+  async publierApresEcriture(channel: string, payload: object): Promise<void> {
+    try {
+      await this.publish(channel, payload);
+    } catch (erreur) {
+      this.logger.error(
+        `Publication ${channel} perdue après l'écriture en base (${referencePublication(payload)}) : ${JSON.stringify(erreur instanceof Error ? erreur.message : String(erreur))}`,
+      );
+    }
   }
 
   async subscribe(
@@ -62,4 +77,13 @@ export class RedisService implements OnModuleDestroy {
     if (this.publisher.status !== 'end') this.publisher.disconnect();
     if (this.subscriber.status !== 'end') this.subscriber.disconnect();
   }
+}
+
+function referencePublication(payload: object): string {
+  const { id, targetId, userId } = payload as Record<string, unknown>;
+  if (typeof id === 'string') return `id ${JSON.stringify(id)}`;
+  if (typeof targetId === 'string' && typeof userId === 'string') {
+    return `lecture de ${JSON.stringify(userId)} sur ${JSON.stringify(targetId)}`;
+  }
+  return 'sans identifiant';
 }

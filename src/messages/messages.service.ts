@@ -13,6 +13,7 @@ import { ConversationSummary } from './dto/conversation-summary.dto';
 import { CreateAdminMessageDto } from './dto/create-admin-message.dto';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { DestinatairesService } from '../destinataires.service';
+import { EtatLectureService } from '../lecture/etat-lecture.service';
 import { AdminHistoryQueryDto, HistoryQueryDto } from './dto/history-query.dto';
 import { UpdateMessageDto } from './dto/update-message.dto';
 
@@ -24,10 +25,9 @@ export class MessagesService {
     private readonly redis: RedisService,
     private readonly limiteEnvoi: LimiteEnvoiService,
     private readonly destinataires: DestinatairesService,
+    private readonly lecture: EtatLectureService,
   ) {}
 
-  /** `jeton` : celui de l'expéditeur, pour vérifier que le destinataire
-   * existe (voir DestinatairesService). */
   create(
     senderId: string,
     dto: CreateMessageDto,
@@ -36,10 +36,6 @@ export class MessagesService {
     return this.creer(senderId, dto, jeton);
   }
 
-  /** Message envoyé par un admin au nom de `dto.senderId`. L'expéditeur est
-   * vérifié AVANT sa limite d'envoi, contrairement au destinataire dans
-   * creer() : la limite est la sienne, pas celle de l'admin, et la route
-   * réservée aux admins ne sert pas à sonder Authentification. */
   async createForAdmin(
     dto: CreateAdminMessageDto,
     jeton: string,
@@ -53,17 +49,12 @@ export class MessagesService {
     );
   }
 
-  /** `auditer` : appelé dès l'écriture en base, avant la publication Redis,
-   * pour que la trace existe même si celle-ci échoue. */
   private async creer(
     senderId: string,
     dto: CreateMessageDto,
     jeton: string,
     auditer?: (message: PrivateMessage) => void,
   ): Promise<PrivateMessage> {
-    // En premier, volontairement : une tentative refusée (à soi-même,
-    // destinataire inconnu) compte aussi dans la limite, sinon un script
-    // pourrait sonder Authentification sans limite via cette route.
     this.limiteEnvoi.verifier(senderId);
     if (dto.recipientId === senderId) {
       throw new BadRequestException(
@@ -72,15 +63,40 @@ export class MessagesService {
     }
     await this.destinataires.exigerExistant(dto.recipientId, jeton);
 
-    // 1) PostgreSQL fait foi.
     const message = await this.prisma.privateMessage.create({
       data: { senderId, recipientId: dto.recipientId, content: dto.content },
     });
     auditer?.(message);
 
-    // 2) L'événement n'est publié qu'après l'écriture réussie en base.
-    await this.redis.publish('private-message.created', message);
+    await this.redis.publierApresEcriture('private-message.created', message);
     return message;
+  }
+
+  async markDelivered(userId: string, id: string): Promise<PrivateMessage> {
+    const message = await this.prisma.privateMessage.findUnique({
+      where: { id },
+    });
+    if (!message) throw new NotFoundException('Message introuvable');
+    if (message.recipientId !== userId)
+      throw new ForbiddenException('Destinataire requis');
+    if (message.deliveredAt) return message;
+    const [delivered] = await this.prisma.$queryRaw<PrivateMessage[]>`
+      UPDATE "PrivateMessage" SET "deliveredAt" = ${new Date()}
+      WHERE "id" = ${id} AND "deliveredAt" IS NULL
+      RETURNING *
+    `;
+    if (!delivered) {
+      const actuel = await this.prisma.privateMessage.findUnique({
+        where: { id },
+      });
+      if (!actuel) throw new NotFoundException('Message introuvable');
+      return actuel;
+    }
+    await this.redis.publierApresEcriture(
+      'private-message.delivered',
+      delivered,
+    );
+    return delivered;
   }
 
   async history(
@@ -88,10 +104,17 @@ export class MessagesService {
     otherUserId: string,
     query: HistoryQueryDto,
   ): Promise<PrivateMessage[]> {
-    if (query.cursor) {
+    if (
+      (query.around && query.cursor) ||
+      (query.direction === 'after' && (!query.cursor || query.around))
+    ) {
+      throw new BadRequestException('Pagination incompatible');
+    }
+    const anchor = query.around ?? query.cursor;
+    if (anchor) {
       const cursorMessage = await this.prisma.privateMessage.findFirst({
         where: {
-          id: query.cursor,
+          id: anchor,
           OR: [
             { senderId: userId, recipientId: otherUserId },
             { senderId: otherUserId, recipientId: userId },
@@ -114,23 +137,18 @@ export class MessagesService {
           { senderId: otherUserId, recipientId: userId },
         ],
       },
-      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      ...(anchor ? { cursor: { id: anchor }, skip: query.around ? 0 : 1 } : {}),
       take: query.limit,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [
+        { createdAt: query.direction === 'after' ? 'asc' : 'desc' },
+        { id: query.direction === 'after' ? 'asc' : 'desc' },
+      ],
     });
 
-    // La requête récupère d'abord les messages les plus récents afin que
-    // `take` sélectionne la bonne page, puis l'API les renvoie dans l'ordre
-    // chronologique attendu par l'interface de clavardage. L'UUID sert ici
-    // uniquement de bris d'égalité stable lorsque createdAt est identique.
-    return messages.reverse();
+    return query.direction === 'after' ? messages : messages.reverse();
   }
 
   async listConversations(userId: string): Promise<ConversationSummary[]> {
-    // Ne charge PAS tout l'historique : coût proportionnel au nombre
-    // d'interlocuteurs, pas au nombre de messages (index
-    // senderId/recipientId/createdAt dans les deux sens).
-    // 1) Date du dernier message échangé avec chaque interlocuteur.
     const [envoyes, recus] = await Promise.all([
       this.prisma.privateMessage.groupBy({
         by: ['recipientId'],
@@ -155,20 +173,21 @@ export class MessagesService {
     for (const ligne of recus) retenir(ligne.senderId, ligne._max.createdAt);
     if (derniereDate.size === 0) return [];
 
-    // 2) Uniquement ces derniers messages (plusieurs possibles à la même
-    // milliseconde : départagés par id, comme dans history()).
-    const derniers = await this.prisma.privateMessage.findMany({
-      where: {
-        OR: [...derniereDate].map(([autreId, createdAt]) => ({
-          createdAt,
-          OR: [
-            { senderId: userId, recipientId: autreId },
-            { senderId: autreId, recipientId: userId },
-          ],
-        })),
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    });
+    const [derniers, nonLus] = await Promise.all([
+      this.prisma.privateMessage.findMany({
+        where: {
+          OR: [...derniereDate].map(([autreId, createdAt]) => ({
+            createdAt,
+            OR: [
+              { senderId: userId, recipientId: autreId },
+              { senderId: autreId, recipientId: userId },
+            ],
+          })),
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      }),
+      this.lecture.compteursDm(userId),
+    ]);
 
     const seen = new Set<string>();
     const conversations: ConversationSummary[] = [];
@@ -180,17 +199,16 @@ export class MessagesService {
       if (seen.has(otherUserId)) continue;
       seen.add(otherUserId);
 
-      conversations.push({ otherUserId, lastMessage: message });
+      conversations.push({
+        otherUserId,
+        lastMessage: message,
+        unreadCount: nonLus.get(otherUserId) ?? 0,
+      });
     }
 
     return conversations;
   }
 
-  /**
-   * Compte supprimé (route interne) : ses conversations privées, dans les
-   * deux sens (son interlocuteur ne peut plus lui répondre, et les messages
-   * reçus contiennent des données le concernant).
-   */
   async supprimerUtilisateur(userId: string): Promise<number> {
     const { count } = await this.prisma.privateMessage.deleteMany({
       where: { OR: [{ senderId: userId }, { recipientId: userId }] },
@@ -250,7 +268,7 @@ export class MessagesService {
       data: { content: dto.content },
     });
 
-    await this.redis.publish('private-message.updated', message);
+    await this.redis.publierApresEcriture('private-message.updated', message);
     return message;
   }
 
@@ -267,7 +285,7 @@ export class MessagesService {
 
     await this.prisma.privateMessage.delete({ where: { id } });
 
-    await this.redis.publish('private-message.deleted', {
+    await this.redis.publierApresEcriture('private-message.deleted', {
       id: existing.id,
       senderId: existing.senderId,
       recipientId: existing.recipientId,
@@ -282,7 +300,7 @@ export class MessagesService {
 
     await this.prisma.privateMessage.delete({ where: { id } });
     this.logger.log(`Admin ${adminId} a supprimé le DM ${id}`);
-    await this.redis.publish('private-message.deleted', {
+    await this.redis.publierApresEcriture('private-message.deleted', {
       id: existing.id,
       senderId: existing.senderId,
       recipientId: existing.recipientId,

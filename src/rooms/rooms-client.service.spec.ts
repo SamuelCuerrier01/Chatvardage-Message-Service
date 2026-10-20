@@ -28,7 +28,6 @@ describe('RoomsClientService', () => {
   };
 
   beforeEach(() => {
-    // La configuration est lue à la construction (voir lireConfigRoomsClient).
     process.env.INTERNAL_SERVICE_TOKEN = 'secret-interne';
     service = new RoomsClientService();
   });
@@ -217,7 +216,6 @@ describe('RoomsClientService', () => {
       await service.verifierAcces('r1', acteur);
       expect(global.fetch).toHaveBeenCalledTimes(1);
 
-      // Autre utilisateur, autre rôle ou autre salon : autre entrée.
       await service.verifierAcces('r1', { id: 'u2', role: 'utilisateur' });
       await service.verifierAcces('r1', { id: 'u1', role: 'admin' });
       await service.verifierAcces('r2', acteur);
@@ -293,4 +291,151 @@ describe('RoomsClientService', () => {
       expect(dureeCacheAccesMs()).toBeGreaterThanOrEqual(0);
     });
   });
+
+  describe('salons lisibles', () => {
+    const corps = {
+      salons: [
+        { salonId: 'r1', serveurId: 's1', depuis: '2026-03-04T05:06:07.000Z' },
+        { salonId: 'r2', serveurId: 'defaut', depuis: null },
+      ],
+    };
+    const attendu = [
+      {
+        salonId: 'r1',
+        serveurId: 's1',
+        depuis: new Date('2026-03-04T05:06:07.000Z'),
+      },
+      { salonId: 'r2', serveurId: 'defaut', depuis: null },
+    ];
+    const listeOk = () =>
+      Promise.resolve({ ok: true, status: 200, json: async () => corps });
+
+    it('interroge la route interne avec le rôle global et convertit les dates', async () => {
+      global.fetch = jest.fn(listeOk) as unknown as typeof fetch;
+      await expect(
+        service.salonsLisibles({ id: 'u/1', role: 'admin' }),
+      ).resolves.toEqual(attendu);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:3003/api/internal/users/u%2F1/channels?role=admin',
+        expect.objectContaining({
+          headers: { 'x-internal-token': 'secret-interne' },
+        }),
+      );
+    });
+
+    it('mémorise la liste et l’oublie au moindre changement de serveur', async () => {
+      global.fetch = jest.fn(listeOk) as unknown as typeof fetch;
+      await service.salonsLisibles(acteur);
+      await service.salonsLisibles(acteur);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      service.oublierServeur('nouveau-serveur');
+      await service.salonsLisibles(acteur);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('redemande une liste expirée', async () => {
+      global.fetch = jest.fn(listeOk) as unknown as typeof fetch;
+      const maintenant = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+      try {
+        await service.salonsLisibles(acteur);
+        maintenant.mockReturnValue(1_000 + 10_001);
+        await service.salonsLisibles(acteur);
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+      } finally {
+        maintenant.mockRestore();
+      }
+    });
+
+    it('un 404 (Room-Service sans cette route) est une panne : 503', async () => {
+      repondre({ ok: false, status: 404, json: async () => ({}) });
+      await expect(service.salonsLisibles(acteur)).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+    });
+
+    it.each([
+      ['sans liste', {}],
+      ['corps nul', null],
+      ['salon nul', { salons: [null] }],
+      ['salonId manquant', { salons: [{ serveurId: 's', depuis: null }] }],
+      ['serveurId manquant', { salons: [{ salonId: 'r', depuis: null }] }],
+      ['depuis absent', { salons: [{ salonId: 'r', serveurId: 's' }] }],
+      [
+        'date invalide',
+        { salons: [{ salonId: 'r', serveurId: 's', depuis: 'hier' }] },
+      ],
+    ])('refuse une réponse invalide (%s) : 502', async (_cas, reponse) => {
+      repondre({ ok: true, status: 200, json: async () => reponse });
+      await expect(service.salonsLisibles(acteur)).rejects.toBeInstanceOf(
+        BadGatewayException,
+      );
+    });
+  });
+
+  it.each(['liste', 'acces'])(
+    'redemande les droits invalidés pendant une réponse %s en cours',
+    async (type) => {
+      let resoudre!: (valeur: unknown) => void;
+      const nouveaux = { ...acces, peutLire: false, peutModerer: false };
+      global.fetch = jest
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((r) => {
+              resoudre = r;
+            }),
+        )
+        .mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => (type === 'liste' ? { salons: [] } : nouveaux),
+        });
+      const lire = () =>
+        type === 'liste'
+          ? service.salonsLisibles(acteur)
+          : service.verifierAcces('r1', acteur);
+      const enCours = lire();
+      service.oublierServeur('s1');
+      resoudre({
+        ok: true,
+        status: 200,
+        json: async () =>
+          type === 'liste'
+            ? { salons: [{ salonId: 'r1', serveurId: 's1', depuis: null }] }
+            : acces,
+      });
+      const attendu = type === 'liste' ? [] : nouveaux;
+      await expect(enCours).resolves.toEqual(attendu);
+      await expect(lire()).resolves.toEqual(attendu);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(['liste', 'acces'])(
+    'refuse une réponse %s si les droits changent aussi pendant la relance',
+    async (type) => {
+      global.fetch = jest.fn().mockImplementation(async () => {
+        service.oublierServeur('s1');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => (type === 'liste' ? { salons: [] } : acces),
+        };
+      });
+      const lire = () =>
+        type === 'liste'
+          ? service.salonsLisibles(acteur)
+          : service.verifierAcces('r1', acteur);
+      await expect(lire()).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      repondre({
+        ok: true,
+        status: 200,
+        json: async () => (type === 'liste' ? { salons: [] } : acces),
+      });
+      await lire();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    },
+  );
 });

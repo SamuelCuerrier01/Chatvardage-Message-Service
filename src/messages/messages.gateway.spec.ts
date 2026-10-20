@@ -61,13 +61,12 @@ describe('MessagesGateway', () => {
   let gateway: MessagesGateway;
   let emit: jest.Mock;
   let to: jest.Mock;
-  // Sockets retournés par server.in(`user:<id>`).fetchSockets(), par id.
   let socketsParUtilisateur: Record<string, any[]>;
 
   beforeEach(() => {
     messages = { create: jest.fn() };
     redis = { subscribe: jest.fn() };
-    jwt = { verifyToken: jest.fn() };
+    jwt = { verifyToken: jest.fn(), verifyTokenFresh: jest.fn() };
     roomMessages = { create: jest.fn() };
     rooms = { verifierAcces: jest.fn(), oublierServeur: jest.fn() };
     gateway = new MessagesGateway(messages, redis, jwt, roomMessages, rooms);
@@ -82,7 +81,6 @@ describe('MessagesGateway', () => {
     (gateway as any).server = { to, in: inRoom };
   });
 
-  /** Laisse s'exécuter la révocation (asynchrone, non attendue). */
   const vider = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   function socketDansSalons(
@@ -110,12 +108,15 @@ describe('MessagesGateway', () => {
         'private-message.created',
         'private-message.updated',
         'private-message.deleted',
+        'private-message.delivered',
         'room-message.created',
         'room-message.updated',
         'room-message.deleted',
         'presence.changed',
         'profil.changed',
         'serveur.change',
+        'read-state.updated',
+        'sessions.revoquees',
       ],
       expect.any(Function),
     );
@@ -304,7 +305,6 @@ describe('MessagesGateway', () => {
       expect(revoque.emit).toHaveBeenCalledWith('session.revoquee');
       expect(revoque.disconnect).toHaveBeenCalledWith(true);
       expect(valide.disconnect).not.toHaveBeenCalled();
-      // Rôle global mis à jour pour les droits des salons.
       expect(valide.data.role).toBe('admin');
     });
 
@@ -378,7 +378,6 @@ describe('MessagesGateway', () => {
       await premiere;
       expect((gateway as any).server.fetchSockets).toHaveBeenCalledTimes(1);
 
-      // La passe suivante, une fois la première finie, a bien lieu.
       await gateway.revaliderSockets();
       expect((gateway as any).server.fetchSockets).toHaveBeenCalledTimes(2);
     });
@@ -493,8 +492,6 @@ describe('MessagesGateway', () => {
     expect(client.data.userId).toBe('u1');
     expect(client.data.role).toBe('utilisateur');
     expect(client.join).toHaveBeenCalledWith('user:u1');
-    // Signalé en dernier, une fois le socket authentifié et dans sa room :
-    // le client peut alors annoncer sa présence et rejoindre ses salons.
     expect(client.emit).toHaveBeenLastCalledWith('connexion.prete');
   });
 
@@ -519,8 +516,6 @@ describe('MessagesGateway', () => {
       'jwt-u1',
     );
   });
-
-  // --- présence en temps réel ---
 
   it('ignores the disconnect of a socket that was never authenticated', async () => {
     redis.publish = jest.fn();
@@ -596,10 +591,10 @@ describe('MessagesGateway', () => {
     beforeEach(() => {
       socketsDe.u2 = [
         { data: { userId: 'u2', presence: 'hors-ligne' } },
-        { data: { userId: 'u2', presence: 'en-ligne' } }, // 2e appareil
+        { data: { userId: 'u2', presence: 'en-ligne' } },
       ];
       socketsDe.u3 = [{ data: { userId: 'u3', presence: 'hors-ligne' } }];
-      socketsDe.u4 = [{ data: { userId: 'u4' } }]; // pas encore annoncé
+      socketsDe.u4 = [{ data: { userId: 'u4' } }];
       (gateway as any).server = {
         in: jest.fn((room: string) => ({
           fetchSockets: jest
@@ -618,7 +613,6 @@ describe('MessagesGateway', () => {
       expect(reponse).toEqual({ enLigne: ['u2'] });
       expect(c.leave).toHaveBeenCalledWith('presence:ancien');
       expect(c.leave).toHaveBeenCalledTimes(1);
-      // Jamais soi-même.
       expect(c.join).toHaveBeenCalledWith([
         'presence:u2',
         'presence:u3',
@@ -647,8 +641,6 @@ describe('MessagesGateway', () => {
       ).rejects.toThrow('Utilisateur non authentifié');
     });
   });
-
-  // --- profils et serveurs ---
 
   it("publishes a profile change for the socket's own user only", async () => {
     redis.publish = jest.fn().mockResolvedValue(1);
@@ -680,14 +672,12 @@ describe('MessagesGateway', () => {
       await gateway.updateProfil(socket());
       expect(redis.publish).toHaveBeenCalledTimes(1);
 
-      // Fin de la fenêtre de DELAI_MIN_PROFIL_MS depuis le premier envoi.
       jest.advanceTimersByTime(DELAI_MIN_PROFIL_MS - 1000);
       expect(redis.publish).toHaveBeenCalledTimes(2);
       expect(redis.publish).toHaveBeenLastCalledWith('profil.changed', {
         userId: 'u1',
       });
 
-      // L'envoi différé ouvre une nouvelle fenêtre.
       await gateway.updateProfil(socket());
       expect(redis.publish).toHaveBeenCalledTimes(2);
       jest.advanceTimersByTime(DELAI_MIN_PROFIL_MS);
@@ -714,7 +704,6 @@ describe('MessagesGateway', () => {
       expect(redis.publish).toHaveBeenCalledWith('profil.changed', {
         userId: 'u1',
       });
-      // 2 profils + présence hors ligne + nouveau profil de s1.
       expect(redis.publish).toHaveBeenCalledTimes(4);
     });
 
@@ -749,6 +738,82 @@ describe('MessagesGateway', () => {
       );
   }
 
+  it('sessions révoquées : revérifie sans cache les seuls sockets de ce compte', async () => {
+    const socket = (id: string, token: string) => ({
+      id,
+      handshake: { auth: { token } },
+      data: { userId: 'u1', role: 'utilisateur' },
+      emit: jest.fn(),
+      disconnect: jest.fn(),
+    });
+    const ancien = socket('ancien', 'jeton-revoque');
+    const courant = socket('courant', 'nouveau-jeton');
+    const fetchSockets = jest.fn().mockResolvedValue([ancien, courant]);
+    const versUtilisateur = jest.fn().mockReturnValue({ fetchSockets });
+    (gateway as any).server = { in: versUtilisateur };
+    jwt.verifyTokenFresh.mockImplementation(async (token: string) => {
+      if (token === 'jeton-revoque') throw new UnauthorizedException();
+      return { id: 'u1', role: 'utilisateur' };
+    });
+    const publier = await brancherRedis();
+
+    publier('sessions.revoquees', { userId: 'u1' });
+    await new Promise((fin) => setImmediate(fin));
+
+    expect(versUtilisateur).toHaveBeenCalledWith('user:u1');
+    expect(jwt.verifyToken).not.toHaveBeenCalled();
+    expect(ancien.emit).toHaveBeenCalledWith('session.revoquee');
+    expect(ancien.disconnect).toHaveBeenCalledWith(true);
+    expect(courant.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('sessions révoquées : signale une panne Auth sans fermer les sockets', async () => {
+    const avertir = jest
+      .spyOn((gateway as any).logger, 'warn')
+      .mockImplementation(() => undefined);
+    const socket = {
+      id: 'courant',
+      handshake: { auth: { token: 'jeton' } },
+      data: { userId: 'u1', role: 'utilisateur' },
+      emit: jest.fn(),
+      disconnect: jest.fn(),
+    };
+    (gateway as any).server = {
+      in: jest.fn().mockReturnValue({
+        fetchSockets: jest.fn().mockResolvedValue([socket]),
+      }),
+    };
+    jwt.verifyTokenFresh.mockRejectedValue(new Error('Auth indisponible'));
+    await gateway.revaliderSocketsUtilisateur('u1');
+    expect(socket.disconnect).not.toHaveBeenCalled();
+    expect(avertir).toHaveBeenCalledWith(
+      'Authentification indisponible après invalidation : 1 socket(s) gardé(s) sans revérification',
+    );
+  });
+  it('sessions révoquées : ignore un message invalide et journalise un échec', async () => {
+    const erreur = jest
+      .spyOn((gateway as any).logger, 'error')
+      .mockImplementation(() => undefined);
+    const avertir = jest
+      .spyOn((gateway as any).logger, 'warn')
+      .mockImplementation(() => undefined);
+    const fetchSockets = jest.fn().mockRejectedValue(new Error('redis'));
+    (gateway as any).server = {
+      in: jest.fn().mockReturnValue({ fetchSockets }),
+    };
+    const publier = await brancherRedis();
+
+    publier('sessions.revoquees', { userId: 3 });
+    expect(avertir).toHaveBeenCalled();
+    expect(fetchSockets).not.toHaveBeenCalled();
+
+    publier('sessions.revoquees', { userId: 'u1' });
+    await new Promise((fin) => setImmediate(fin));
+    expect(erreur).toHaveBeenCalledWith(
+      expect.stringContaining('Revalidation des sockets de u1'),
+    );
+  });
+
   it('broadcasts profile changes to every client, ignoring invalid ones', async () => {
     const serverEmit = jest.fn();
     (gateway as any).server = { emit: serverEmit };
@@ -761,6 +826,54 @@ describe('MessagesGateway', () => {
     expect(serverEmit.mock.calls).toEqual([
       ['profil.changed', { userId: 'u1' }],
     ]);
+  });
+
+  it('relaie un état de lecture : DM aux deux personnes, salon à sa room', async () => {
+    const publier = await brancherRedis();
+    const dm = {
+      kind: 'dm',
+      targetId: 'u2',
+      userId: 'u1',
+      lastReadAt: '2026-10-06T12:00:00.000Z',
+      lastReadMessageId: null,
+    };
+    publier('read-state.updated', { ...dm, extra: 'ignoré' });
+    expect(to).toHaveBeenLastCalledWith(['user:u1', 'user:u2']);
+    expect(emit).toHaveBeenLastCalledWith('read-state.updated', dm);
+
+    publier('read-state.updated', { ...dm, kind: 'room', targetId: 'r1' });
+    expect(to).toHaveBeenLastCalledWith('room:r1');
+    expect(emit).toHaveBeenCalledTimes(2);
+    publier('read-state.updated', { ...dm, lastReadMessageId: 'm1' });
+    expect(emit).toHaveBeenLastCalledWith('read-state.updated', {
+      ...dm,
+      lastReadMessageId: 'm1',
+    });
+    const ancien: Partial<typeof dm> = { ...dm };
+    delete ancien.lastReadMessageId;
+    publier('read-state.updated', ancien);
+    expect(emit).toHaveBeenLastCalledWith('read-state.updated', dm);
+  });
+
+  it.each([
+    'pas du json',
+    'null',
+    { kind: 'groupe', targetId: 't', userId: 'u', lastReadAt: 'd' },
+    { kind: 'dm', targetId: 1, userId: 'u', lastReadAt: 'd' },
+    { kind: 'dm', targetId: 't', userId: null, lastReadAt: 'd' },
+    { kind: 'room', targetId: 't', userId: 'u', lastReadAt: 5 },
+    { kind: 'room', targetId: 't', userId: 'u', lastReadAt: 'invalide' },
+    {
+      kind: 'dm',
+      targetId: 't',
+      userId: 'u',
+      lastReadAt: '2026-01-01T00:00:00Z',
+      lastReadMessageId: 1,
+    },
+  ])('ignore un état de lecture invalide (%p)', async (payload) => {
+    const publier = await brancherRedis();
+    publier('read-state.updated', payload);
+    expect(emit).not.toHaveBeenCalled();
   });
 
   it('relays a server change to each listed user only', async () => {
@@ -779,7 +892,6 @@ describe('MessagesGateway', () => {
       raison: 'expulse',
       cibleId: 'u3',
     });
-    // Les accès mémorisés à ce serveur sont oubliés avant la revérification.
     expect(rooms.oublierServeur).toHaveBeenCalledWith('s1');
   });
 
@@ -853,7 +965,6 @@ describe('MessagesGateway', () => {
       userId: 'u1',
       statut: 'en-ligne',
     });
-    // Plus de diffusion à tous les clients.
     expect((gateway as any).server.emit).not.toHaveBeenCalled();
 
     serverEmit.mockClear();
@@ -933,8 +1044,6 @@ describe('MessagesGateway', () => {
     expect(emit).not.toHaveBeenCalled();
   });
 
-  // --- room-message.join / leave / send ---
-
   it('refuses joining a room when the socket has no authenticated user', async () => {
     const client: any = { data: {} };
     await expect(gateway.joinRoom(client, { roomId: 'r1' })).rejects.toThrow(
@@ -964,7 +1073,6 @@ describe('MessagesGateway', () => {
       joined: true,
     });
     expect(client.join).toHaveBeenCalledWith('room:r1');
-    // Mémorisé pour pouvoir retirer le socket s'il perd l'accès.
     expect(client.data.salons).toEqual({ r0: 's0', r1: 's1' });
     expect(rooms.verifierAcces).toHaveBeenCalledWith('r1', {
       id: 'u1',
@@ -1009,15 +1117,12 @@ describe('MessagesGateway', () => {
     const client: any = { data: { userId: 'u1' } };
 
     await gateway.sendRoom(client, { roomId: 'r1', content: 'x' });
-    // Sans rôle mémorisé (cas théorique) : "utilisateur", le moins privilégié.
     expect(roomMessages.create).toHaveBeenCalledWith(
       { id: 'u1', role: 'utilisateur' },
       'r1',
       { content: 'x' },
     );
   });
-
-  // --- typing ---
 
   it('refuses a typing event when the socket has no authenticated user', () => {
     const client: any = { data: {}, to: jest.fn() };
@@ -1071,19 +1176,41 @@ describe('MessagesGateway', () => {
         gateway.typing(client, { scope: 'dm', targetId, isTyping });
 
       saisie('u2', true);
-      saisie('u2', true); // frappe suivante, même état : ignorée
-      saisie('u3', true); // autre cible : indépendante
+      saisie('u2', true);
+      saisie('u3', true);
       expect(typingEmit).toHaveBeenCalledTimes(2);
 
-      saisie('u2', false); // changement d'état : relayé tout de suite
+      saisie('u2', false);
       expect(typingEmit).toHaveBeenCalledTimes(3);
 
       jest.advanceTimersByTime(DELAI_MIN_SAISIE_MS);
-      saisie('u2', false); // fenêtre écoulée : relayé à nouveau
+      saisie('u2', false);
       expect(typingEmit).toHaveBeenCalledTimes(4);
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('borne la mémoire de saisie même si un client change continuellement de destinataire', () => {
+    const typingEmit = jest.fn();
+    const client: any = {
+      data: { userId: 'u1' },
+      to: jest.fn(() => ({ emit: typingEmit })),
+    };
+    for (let i = 0; i < 1500; i++) {
+      gateway.typing(client, {
+        scope: 'dm',
+        targetId: `cible-${i}`,
+        isTyping: true,
+      });
+    }
+    expect(Object.keys(client.data.saisies)).toHaveLength(1000);
+    gateway.typing(client, {
+      scope: 'dm',
+      targetId: 'cible-1499',
+      isTyping: true,
+    });
+    expect(typingEmit).toHaveBeenCalledTimes(1500);
   });
 
   it('relays a DM-scoped typing event to the target user', () => {
@@ -1103,8 +1230,6 @@ describe('MessagesGateway', () => {
       isTyping: false,
     });
   });
-
-  // --- révocation des salons dont l'accès est perdu ---
 
   it.each([
     [{ raison: 'expulse', cibleId: 'u3' }, ['u3']],
@@ -1164,7 +1289,6 @@ describe('MessagesGateway', () => {
     expect(perdu.leave).toHaveBeenCalledWith('room:r1');
     expect(perdu.data.salons).toEqual({ r2: 's2' });
     expect(garde.leave).not.toHaveBeenCalled();
-    // Socket pas encore authentifié : ignoré.
     expect(enCours.leave).not.toHaveBeenCalled();
   });
 
@@ -1206,7 +1330,6 @@ describe('MessagesGateway', () => {
     });
     await vider();
 
-    // Sans rôle mémorisé : "utilisateur", le moins privilégié.
     expect(rooms.verifierAcces).toHaveBeenCalledTimes(1);
     expect(rooms.verifierAcces).toHaveBeenCalledWith('r1', {
       id: 'u3',

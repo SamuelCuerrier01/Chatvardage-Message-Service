@@ -5,6 +5,8 @@ import { MessagesController } from './messages.controller';
 describe('MessagesController', () => {
   let service: any;
   let controller: MessagesController;
+  let lecture: any;
+  let recherche: any;
   const req: any = {
     auth: { id: 'u1', role: 'utilisateur' },
     headers: { authorization: 'Bearer jwt-u1' },
@@ -14,8 +16,14 @@ describe('MessagesController', () => {
     headers: { authorization: 'Bearer jwt-admin' },
   };
 
+  it('la confirmation utilise lidentite authentifiee', async () => {
+    service.markDelivered.mockResolvedValue('receipt');
+    await expect(controller.markDelivered(req, 'm1')).resolves.toBe('receipt');
+    expect(service.markDelivered).toHaveBeenCalledWith('u1', 'm1');
+  });
   beforeEach(() => {
     service = {
+      markDelivered: jest.fn(),
       create: jest.fn(),
       createForAdmin: jest.fn(),
       history: jest.fn(),
@@ -26,7 +34,26 @@ describe('MessagesController', () => {
       remove: jest.fn(),
       removeForAdmin: jest.fn(),
     };
-    controller = new MessagesController(service);
+    lecture = {
+      lecteurDm: jest.fn().mockResolvedValue('lecteur'),
+      marquerDmLu: jest.fn().mockResolvedValue('etat'),
+      compteurs: jest.fn().mockResolvedValue({ 'dm:u2': 1 }),
+      activiteSalons: jest
+        .fn()
+        .mockResolvedValue({ 'room:r1': '2026-10-08T10:00:00.000Z' }),
+    };
+    recherche = {
+      rechercher: jest.fn().mockResolvedValue('page'),
+      resumer: jest.fn().mockResolvedValue('résumé'),
+    };
+    controller = new MessagesController(service, lecture, recherche);
+  });
+
+  it('le résumé utilise uniquement l’identité authentifiée et le texte validé', async () => {
+    await expect(controller.searchSummary(req, { q: 'bonjour' })).resolves.toBe(
+      'résumé',
+    );
+    expect(recherche.resumer).toHaveBeenCalledWith(req.auth, 'bonjour');
   });
 
   it('delegates authenticated CRUD operations', async () => {
@@ -97,4 +124,28 @@ describe('MessagesController', () => {
       ).toEqual([AdminGuard]);
     },
   );
+
+  it('délègue la lecture, les non-lus et la recherche', async () => {
+    await expect(
+      controller.markDmRead(req, 'u2', { messageId: 'm' }),
+    ).resolves.toBe('etat');
+    expect(lecture.marquerDmLu).toHaveBeenCalledWith('u1', 'u2', 'm');
+
+    await expect(controller.dmReadState(req, 'u2')).resolves.toBe('lecteur');
+    expect(lecture.lecteurDm).toHaveBeenCalledWith('u1', 'u2');
+
+    await expect(controller.unread(req)).resolves.toEqual({
+      counts: { 'dm:u2': 1 },
+    });
+    expect(lecture.compteurs).toHaveBeenCalledWith(req.auth);
+
+    await expect(controller.activity(req)).resolves.toEqual({
+      rooms: { 'room:r1': '2026-10-08T10:00:00.000Z' },
+    });
+    expect(lecture.activiteSalons).toHaveBeenCalledWith(req.auth);
+
+    const query = { q: 'salut', limit: 20 };
+    await expect(controller.search(req, query)).resolves.toBe('page');
+    expect(recherche.rechercher).toHaveBeenCalledWith(req.auth, query);
+  });
 });

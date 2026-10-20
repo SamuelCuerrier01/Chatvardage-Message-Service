@@ -1,11 +1,24 @@
+jest.mock('ioredis', () => ({
+  __esModule: true,
+  default: jest.fn().mockImplementation(() => ({
+    status: 'ready',
+    publish: jest.fn().mockRejectedValue(new Error('redis down')),
+  })),
+}));
+
 import {
   HttpException,
   HttpStatus,
   BadRequestException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { RedisService } from '../redis.service';
 import { RoomMessagesService } from './room-messages.service';
+
+const canalPerdu = (texte: string) =>
+  /^Publication (\S+) perdue /.exec(texte)?.[1];
 
 describe('RoomMessagesService', () => {
   const msg = {
@@ -16,7 +29,6 @@ describe('RoomMessagesService', () => {
     createdAt: new Date(),
     updatedAt: new Date(),
   };
-  // Réponse de la route interne de Room-Service.
   const lecteurEcrivain = {
     salonId: 'r1',
     serveurId: 's1',
@@ -52,7 +64,7 @@ describe('RoomMessagesService', () => {
         deleteMany: jest.fn().mockResolvedValue({ count: 3 }),
       },
     };
-    redis = { publish: jest.fn() };
+    redis = { publierApresEcriture: jest.fn() };
     rooms = { verifierAcces: jest.fn().mockResolvedValue(lecteurEcrivain) };
     limiteEnvoi = { verifier: jest.fn() };
     destinataires = { roleDe: jest.fn().mockResolvedValue('utilisateur') };
@@ -67,7 +79,7 @@ describe('RoomMessagesService', () => {
 
   it('creates then publishes', async () => {
     prisma.roomMessage.create.mockResolvedValue(msg);
-    redis.publish.mockResolvedValue(1);
+    redis.publierApresEcriture.mockResolvedValue(1);
 
     await expect(
       service.create(acteur('u1'), 'r1', { content: 'hi' }),
@@ -76,13 +88,16 @@ describe('RoomMessagesService', () => {
     expect(prisma.roomMessage.create).toHaveBeenCalledWith({
       data: { roomId: 'r1', authorId: 'u1', content: 'hi' },
     });
-    expect(redis.publish).toHaveBeenCalledWith('room-message.created', msg);
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
+      'room-message.created',
+      msg,
+    );
     expect(limiteEnvoi.verifier).toHaveBeenCalledWith('u1');
   });
 
   it('creates an admin message with the selected author then publishes', async () => {
     prisma.roomMessage.create.mockResolvedValue(msg);
-    redis.publish.mockResolvedValue(1);
+    redis.publierApresEcriture.mockResolvedValue(1);
 
     await expect(
       service.createForAdmin(
@@ -101,7 +116,10 @@ describe('RoomMessagesService', () => {
     expect(prisma.roomMessage.create).toHaveBeenCalledWith({
       data: { roomId: 'r1', authorId: 'u1', content: 'hi' },
     });
-    expect(redis.publish).toHaveBeenCalledWith('room-message.created', msg);
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
+      'room-message.created',
+      msg,
+    );
     expect(limiteEnvoi.verifier).toHaveBeenCalledWith('u1');
   });
 
@@ -190,7 +208,7 @@ describe('RoomMessagesService', () => {
       service.create(acteur('stranger'), 'r1', { content: 'hi' }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(prisma.roomMessage.create).not.toHaveBeenCalled();
-    expect(redis.publish).not.toHaveBeenCalled();
+    expect(redis.publierApresEcriture).not.toHaveBeenCalled();
   });
 
   it('propagates room lookup failures on create', async () => {
@@ -210,7 +228,7 @@ describe('RoomMessagesService', () => {
     await expect(
       service.create(acteur('u1'), 'r1', { content: 'x' }),
     ).rejects.toThrow('db');
-    expect(redis.publish).not.toHaveBeenCalled();
+    expect(redis.publierApresEcriture).not.toHaveBeenCalled();
   });
 
   it('returns history for a member', async () => {
@@ -311,12 +329,49 @@ describe('RoomMessagesService', () => {
     const updated = { ...msg, content: 'n' };
     prisma.roomMessage.findUnique.mockResolvedValue(msg);
     prisma.roomMessage.update.mockResolvedValue(updated);
-    redis.publish.mockResolvedValue(1);
+    redis.publierApresEcriture.mockResolvedValue(1);
 
     await expect(
       service.update(acteur('u1'), 'r1', 'm1', { content: 'n' }),
     ).resolves.toBe(updated);
-    expect(redis.publish).toHaveBeenCalledWith('room-message.updated', updated);
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
+      'room-message.updated',
+      updated,
+    );
+  });
+
+  it('confirme les écritures de salon quand Redis est indisponible', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    try {
+      service = new RoomMessagesService(
+        prisma,
+        new RedisService(),
+        rooms,
+        limiteEnvoi,
+        destinataires,
+      );
+      const updated = { ...msg, content: 'n' };
+      prisma.roomMessage.create.mockResolvedValue(msg);
+      prisma.roomMessage.findUnique.mockResolvedValue(msg);
+      prisma.roomMessage.update.mockResolvedValue(updated);
+
+      await expect(
+        service.create(acteur('u1'), 'r1', { content: 'hi' }),
+      ).resolves.toBe(msg);
+      await expect(
+        service.update(acteur('u1'), 'r1', 'm1', { content: 'n' }),
+      ).resolves.toBe(updated);
+      await expect(
+        service.remove(acteur('u1'), 'r1', 'm1'),
+      ).resolves.toBeUndefined();
+      expect(error.mock.calls.map(([texte]) => canalPerdu(texte))).toEqual([
+        'room-message.created',
+        'room-message.updated',
+        'room-message.deleted',
+      ]);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it('remove not found', async () => {
@@ -351,7 +406,7 @@ describe('RoomMessagesService', () => {
     expect(prisma.roomMessage.delete).toHaveBeenCalledWith({
       where: { id: 'm1' },
     });
-    expect(redis.publish).toHaveBeenCalledWith(
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
       'room-message.deleted',
       expect.objectContaining({ id: 'm1' }),
     );
@@ -382,14 +437,17 @@ describe('RoomMessagesService', () => {
   it('deletes then publishes routed event', async () => {
     prisma.roomMessage.findUnique.mockResolvedValue(msg);
     prisma.roomMessage.delete.mockResolvedValue(msg);
-    redis.publish.mockResolvedValue(1);
+    redis.publierApresEcriture.mockResolvedValue(1);
 
     await service.remove(acteur('u1'), 'r1', 'm1');
-    expect(redis.publish).toHaveBeenCalledWith('room-message.deleted', {
-      id: 'm1',
-      roomId: 'r1',
-      authorId: 'u1',
-    });
+    expect(redis.publierApresEcriture).toHaveBeenCalledWith(
+      'room-message.deleted',
+      {
+        id: 'm1',
+        roomId: 'r1',
+        authorId: 'u1',
+      },
+    );
   });
 
   it('rejects create in a read-only room (#annonces) for a member', async () => {
@@ -414,4 +472,50 @@ describe('RoomMessagesService', () => {
       expect(prisma.roomMessage.findUnique).not.toHaveBeenCalled();
     },
   );
+
+  it('ouvre une page au message cible inclus avec un seul acces pagine', async () => {
+    prisma.roomMessage.findFirst.mockResolvedValue({ id: 'm1' });
+    prisma.roomMessage.findMany.mockResolvedValue([msg]);
+    const query = { around: 'm1', limit: 50 };
+    expect(await service.history(acteur('u1'), 'r1', query)).toEqual([msg]);
+    expect(prisma.roomMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: { id: 'm1' }, skip: 0, take: 50 }),
+    );
+  });
+  it('pagine vers les messages plus recents dans un ordre stable', async () => {
+    prisma.roomMessage.findFirst.mockResolvedValue({ id: 'm1' });
+    prisma.roomMessage.findMany.mockResolvedValue([msg, { ...msg, id: 'm2' }]);
+    const query = { cursor: 'm1', direction: 'after' as const, limit: 50 };
+    expect(
+      (await service.history(acteur('u1'), 'r1', query)).map((m) => m.id),
+    ).toEqual(['m1', 'm2']);
+    expect(prisma.roomMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skip: 1,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      }),
+    );
+  });
+  it.each([
+    { around: 'm1', cursor: 'm2', limit: 50 },
+    { direction: 'after' as const, limit: 50 },
+    { around: 'm1', direction: 'after' as const, limit: 50 },
+    { around: 'm1', cursor: 'm2', direction: 'after' as const, limit: 50 },
+  ])(
+    'refuse une pagination incompatible sans lire les messages',
+    async (query) => {
+      await expect(
+        service.history(acteur('u1'), 'r1', query),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.roomMessage.findMany).not.toHaveBeenCalled();
+    },
+  );
+  it('refuse une cible absente ou appartenant a une autre conversation', async () => {
+    prisma.roomMessage.findFirst.mockResolvedValue(null);
+    const query = { around: 'foreign', limit: 50 };
+    await expect(
+      service.history(acteur('u1'), 'r1', query),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.roomMessage.findMany).not.toHaveBeenCalled();
+  });
 });
