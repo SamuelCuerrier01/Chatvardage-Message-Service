@@ -31,7 +31,7 @@ Architecture d'équipe :
 
 - persister les messages privés et de salon dans PostgreSQL (source de vérité) ;
 - persister l'état de lecture de chaque conversation (`ConversationReadState`), calculer les messages non lus et rechercher dans les seules conversations accessibles (salons lisibles fournis par Room-Service, `GET /api/internal/users/:userId/channels`) ;
-- publier chaque changement sur Redis **après** l'écriture en base, puis le diffuser par Socket.IO ;
+- publier chaque changement sur Redis **après** l'écriture en base (`RedisService.publierApresEcriture`, qui journalise un échec sans faire échouer la requête), puis le diffuser par Socket.IO ;
 - relayer la présence, le profil, l'indicateur de saisie et les changements de serveur signalés par Room-Service (`/api/internal`, jeton interne) ;
 - limiter la fréquence des envois (`LimiteEnvoiService`) et des événements Socket.IO bavards.
 
@@ -100,6 +100,13 @@ Infra est la référence du démarrage complet, des architectures, contrats et s
 - **La promesse de validation Auth en cours est supprimée à l'invalidation** : reprendre une validation commencée avant une révocation serait une faille. Fichier partagé avec Room-Service.
 - **Publication de l'état de lecture** seulement si la lecture relue correspond encore à la date avancée par cet appel ; l'état en base reste monotone. Pas de verrou distribué : chaque consommateur garde la position maximale `(lastReadAt, lastReadMessageId)`.
 - **Une date Redis invalide est rejetée par la gateway** avant d'atteindre les clients.
+- **Référence d'une publication perdue** : `referencePublication` ne reconnaît qu'un `id` texte, ou `userId` et `targetId` pour l'état de lecture. Tous les identifiants du schéma sont des UUID texte ; ne pas gérer d'identifiant numérique sans canal qui en publie. Les valeurs sont passées par `JSON.stringify` pour qu'un retour à la ligne ne fragmente pas le journal.
+- **`referencePublication` non protégée dans le `catch`** : les contenus publiés sont des résultats Prisma ou des objets littéraux du service, sans accesseur qui lève. Un tel accesseur ferait d'ailleurs échouer `JSON.stringify` dans `publish` avant même le `catch`. Pas de second `try/catch` pour un cas qui n'existe pas.
+- **Canal journalisé sans `JSON.stringify`** : les canaux sont des constantes du code, jamais une donnée reçue. Seules les valeurs issues du contenu publié sont échappées.
+- **`mock.invocationCallOrder` dans les tests** : propriété documentée de l'API des fonctions simulées de Jest ; elle reste le moyen direct de vérifier l'audit avant la publication.
+- **`RedisService.publish` reste publique** : la gateway et les routes internes l'appellent directement, car leur appelant doit voir l'échec (Auth et Room-Service retentent ou journalisent). Seules les publications qui suivent une écriture en base passent par `publierApresEcriture`.
+- **Délai de publication** : ioredis arme `commandTimeout` une seule fois par commande, nouvelles tentatives comprises (`Command.setTimeout` ne fait rien si le minuteur existe déjà, et les files hors ligne et de reprise renvoient le même objet `Command`, voir `built/Redis.js` et `built/Command.js` en 5.11). Le pire cas est 2 s de connexion puis 2 s de commande, pas 2 s par tentative.
+- **Une seule constante `DELAI_COMMANDE_MS` pour `connectTimeout` et `commandTimeout`** : le client de publication vise un Redis du même réseau Docker ; les deux délais bornent ensemble la latence d'une écriture (4 s au pire). Ne pas en faire deux variables d'environnement sans besoin de réglage observé.
 - **`Promise.all` à trois opérations pour deux résultats** : la troisième renvoie `void` et son échec doit se propager.
 - **`OR` des compteurs de non-lus DM** : la clause des conversations jamais lues est nécessaire ; une optimisation SQL demande une mesure de charge.
 - **Fusion de recherche** : charger au plus deux fois `limit + 1` lignes détermine la page globale et son curseur ; la limite maximale borne ce coût.

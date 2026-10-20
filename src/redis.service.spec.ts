@@ -1,6 +1,7 @@
+import { Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 
-import { RedisService } from './redis.service';
+import { DELAI_COMMANDE_MS, RedisService } from './redis.service';
 
 const connect = jest.fn(),
   ping = jest.fn(),
@@ -132,6 +133,98 @@ describe('RedisService', () => {
 
     new RedisService();
 
-    expect(Redis).toHaveBeenCalledWith('redis://x', expect.any(Object));
+    expect(Redis).toHaveBeenNthCalledWith(
+      1,
+      'redis://x',
+      expect.objectContaining({
+        connectTimeout: DELAI_COMMANDE_MS,
+        commandTimeout: DELAI_COMMANDE_MS,
+      }),
+    );
+    expect(Redis).toHaveBeenNthCalledWith(
+      2,
+      'redis://x',
+      expect.not.objectContaining({ commandTimeout: expect.anything() }),
+    );
+  });
+
+  it('publierApresEcriture publie le contenu sérialisé', async () => {
+    const s = new RedisService();
+
+    await expect(
+      s.publierApresEcriture('private-message.updated', { id: 'm1' }),
+    ).resolves.toBeUndefined();
+
+    expect(publish).toHaveBeenCalledWith(
+      'private-message.updated',
+      JSON.stringify({ id: 'm1' }),
+    );
+  });
+
+  describe('publierApresEcriture en échec', () => {
+    let error: jest.SpyInstance;
+
+    beforeEach(() => {
+      error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    });
+
+    afterEach(() => error.mockRestore());
+
+    it('journalise l identifiant du message sans propager l erreur', async () => {
+      publish.mockRejectedValueOnce(new Error('redis down'));
+
+      await expect(
+        new RedisService().publierApresEcriture('private-message.created', {
+          id: 'm1',
+          content: 'secret',
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(error).toHaveBeenCalledWith(
+        `Publication private-message.created perdue après l'écriture en base (id "m1") : "redis down"`,
+      );
+    });
+
+    it('journalise la lecture concernée quand la connexion échoue', async () => {
+      connect.mockRejectedValueOnce('hors ligne');
+
+      await expect(
+        new RedisService().publierApresEcriture('read-state.updated', {
+          kind: 'dm',
+          targetId: 'u2',
+          userId: 'u1',
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(publish).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        `Publication read-state.updated perdue après l'écriture en base (lecture de "u1" sur "u2") : "hors ligne"`,
+      );
+    });
+
+    it('échappe les retours à la ligne d un identifiant', async () => {
+      publish.mockRejectedValueOnce(new Error('redis down'));
+
+      await new RedisService().publierApresEcriture('x', {
+        id: 'm1\nfaux enregistrement',
+      });
+
+      expect(error).toHaveBeenCalledWith(
+        'Publication x perdue après l\'écriture en base (id "m1\\nfaux enregistrement") : "redis down"',
+      );
+    });
+
+    it.each([{}, { targetId: 'u2' }])(
+      'reste explicite sans identifiant exploitable (%p)',
+      async (payload) => {
+        publish.mockRejectedValueOnce(new Error('redis down'));
+
+        await new RedisService().publierApresEcriture('x', payload);
+
+        expect(error).toHaveBeenCalledWith(
+          `Publication x perdue après l'écriture en base (sans identifiant) : "redis down"`,
+        );
+      },
+    );
   });
 });

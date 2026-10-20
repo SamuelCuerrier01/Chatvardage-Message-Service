@@ -68,7 +68,7 @@ export class MessagesService {
     });
     auditer?.(message);
 
-    await this.redis.publish('private-message.created', message);
+    await this.redis.publierApresEcriture('private-message.created', message);
     return message;
   }
 
@@ -92,7 +92,10 @@ export class MessagesService {
       if (!actuel) throw new NotFoundException('Message introuvable');
       return actuel;
     }
-    await this.redis.publish('private-message.delivered', delivered);
+    await this.redis.publierApresEcriture(
+      'private-message.delivered',
+      delivered,
+    );
     return delivered;
   }
 
@@ -265,7 +268,7 @@ export class MessagesService {
       data: { content: dto.content },
     });
 
-    await this.redis.publish('private-message.updated', message);
+    await this.redis.publierApresEcriture('private-message.updated', message);
     return message;
   }
 
@@ -282,7 +285,7 @@ export class MessagesService {
 
     await this.prisma.privateMessage.delete({ where: { id } });
 
-    await this.redis.publish('private-message.deleted', {
+    await this.redis.publierApresEcriture('private-message.deleted', {
       id: existing.id,
       senderId: existing.senderId,
       recipientId: existing.recipientId,
@@ -297,7 +300,7 @@ export class MessagesService {
 
     await this.prisma.privateMessage.delete({ where: { id } });
     this.logger.log(`Admin ${adminId} a supprimé le DM ${id}`);
-    await this.redis.publish('private-message.deleted', {
+    await this.redis.publierApresEcriture('private-message.deleted', {
       id: existing.id,
       senderId: existing.senderId,
       recipientId: existing.recipientId,

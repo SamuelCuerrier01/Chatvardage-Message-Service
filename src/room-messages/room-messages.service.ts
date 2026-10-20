@@ -49,7 +49,7 @@ export class RoomMessagesService {
       data: { roomId, authorId: acteur.id, content: dto.content },
     });
 
-    await this.redis.publish('room-message.created', message);
+    await this.redis.publierApresEcriture('room-message.created', message);
     return message;
   }
 
@@ -90,7 +90,7 @@ export class RoomMessagesService {
     this.logger.log(
       `Admin ${acteur.id} a créé le message ${message.id} dans le salon ${roomId} au nom de ${dto.authorId}`,
     );
-    await this.redis.publish('room-message.created', message);
+    await this.redis.publierApresEcriture('room-message.created', message);
     return message;
   }
 
@@ -170,7 +170,7 @@ export class RoomMessagesService {
       data: { content: dto.content },
     });
 
-    await this.redis.publish('room-message.updated', message);
+    await this.redis.publierApresEcriture('room-message.updated', message);
     return message;
   }
 
@@ -190,7 +190,7 @@ export class RoomMessagesService {
 
     await this.prisma.roomMessage.delete({ where: { id } });
 
-    await this.redis.publish('room-message.deleted', {
+    await this.redis.publierApresEcriture('room-message.deleted', {
       id: existing.id,
       roomId: existing.roomId,
       authorId: existing.authorId,
